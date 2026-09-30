@@ -201,34 +201,49 @@ test("Hawaii TDI: 0.5% of wages up to the annual maximum", () => {
 });
 
 // ---------- New Mexico ----------
+// NMSA 7-2-7 brackets (2024 HB 252, not indexed) on federal AGI less the federal standard deduction.
 
 test("New Mexico: single, federal standard deduction", () => {
   const r = S.compute("NM", single());
-  const taxable = 52250 - 16100;
+  const taxable = 52250 - 16100; // 36,150
   near(r.taxable, taxable);
-  near(r.tax, 5500 * 0.015 + 11000 * 0.032 + 17000 * 0.043 + (taxable - 33500) * 0.047);
+  near(r.tax, 5500 * 0.015 + (16500 - 5500) * 0.032 + (33500 - 16500) * 0.043 + (taxable - 33500) * 0.047);
   assert.equal(r.payrollTotal, 0);
+  near(r.supplementalRate, 0.047, 1e-9); // no flat bonus rate set, so the marginal rate is used
 });
 
 test("New Mexico: married filing jointly, two children", () => {
   const r = S.compute("NM", family());
-  const taxable = 135250 - 32200;
+  const taxable = 135250 - 32200; // 103,050; the $4,000 dependent deduction isn't modeled
   near(r.taxable, taxable);
-  near(r.tax, 8000 * 0.015 + 17000 * 0.032 + 25000 * 0.043 + 50000 * 0.047 + (taxable - 100000) * 0.049);
+  near(r.tax, 8000 * 0.015 + (25000 - 8000) * 0.032 + (50000 - 25000) * 0.043 + (100000 - 50000) * 0.047
+    + (taxable - 100000) * 0.049);
+});
+
+test("New Mexico: schedules reproduce the base tax printed in HB 252", () => {
+  const NM = S.get("NM");
+  near(S.bracketTax(210000, NM.brackets.single), 9748);
+  near(S.bracketTax(315000, NM.brackets.mfj), 14624);
+  near(S.bracketTax(315000, NM.brackets.hoh), 14624);
+  near(S.bracketTax(157500, NM.brackets.mfs), 7312);
 });
 
 // ---------- Montana ----------
+// HB 337 (2025): 4.7% up to $47,500 ($95,000 joint, $71,250 HOH), 5.65% above, on federal taxable income.
 
 test("Montana: single, from federal taxable income", () => {
   const r = S.compute("MT", single());
-  near(r.taxable, 36150);
-  near(r.tax, 36150 * 0.047);
+  const taxable = 52250 - 16100; // federal taxable income, 36,150
+  near(r.taxable, taxable);
+  near(r.tax, taxable * 0.047);
+  near(r.supplementalRate, 0.05);
 });
 
 test("Montana: married filing jointly, two children", () => {
   const r = S.compute("MT", family());
-  near(r.taxable, 103050);
-  near(r.tax, 95000 * 0.047 + (103050 - 95000) * 0.0565);
+  const taxable = 135250 - 32200; // 103,050; Montana has no exemptions of its own
+  near(r.taxable, taxable);
+  near(r.tax, 95000 * 0.047 + (taxable - 95000) * 0.0565);
 });
 
 test("Montana and North Dakota take federal taxable income as is (overtime deduction already in it)", () => {
@@ -239,84 +254,135 @@ test("Montana and North Dakota take federal taxable income as is (overtime deduc
 });
 
 // ---------- North Dakota ----------
+// Form ND-1ES 2026: 0% / 1.95% / 2.5% on federal taxable income.
 
 test("North Dakota: single owes nothing inside the 0% bracket", () => {
   const r = S.compute("ND", single());
-  near(r.taxable, 36150);
+  const taxable = 52250 - 16100; // 36,150, under the $49,575 top of the 0% bracket
+  near(r.taxable, taxable);
   near(r.tax, 0);
+  near(r.supplementalRate, 0.015);
 });
 
 test("North Dakota: married filing jointly, two children", () => {
   const r = S.compute("ND", family());
-  near(r.taxable, 103050);
-  near(r.tax, (103050 - 80975) * 0.0195);
+  const taxable = 135250 - 32200; // 103,050
+  near(r.taxable, taxable);
+  near(r.tax, (taxable - 82800) * 0.0195);
+});
+
+test("North Dakota: schedules reproduce the base tax printed on Form ND-1ES 2026", () => {
+  const ND = S.get("ND");
+  near(S.bracketTax(250400, ND.brackets.single), 3916.09);
+  near(S.bracketTax(304850, ND.brackets.mfj), 4329.98);
+  near(S.bracketTax(277600, ND.brackets.hoh), 4118.40);
 });
 
 // ---------- Nebraska ----------
+// 2026: 2.46% / 3.51% / 4.55%; standard deduction $8,850 / $17,700 / $12,950; $176 credit per exemption.
 
 test("Nebraska: single", () => {
   const r = S.compute("NE", single());
-  const taxable = 52250 - 8600;
+  const taxable = 52250 - 8850; // 43,400
   near(r.taxable, taxable);
-  near(r.tax, 4030 * 0.0246 + (24120 - 4030) * 0.0351 + (taxable - 24120) * 0.0455 - 171);
+  near(r.tax, 4130 * 0.0246 + (24760 - 4130) * 0.0351 + (taxable - 24760) * 0.0455 - 176);
+  near(r.supplementalRate, 0.035);
 });
 
 test("Nebraska: married filing jointly, two children", () => {
   const r = S.compute("NE", family());
-  const taxable = 135250 - 17200;
+  const taxable = 135250 - 17700; // 117,550
   near(r.taxable, taxable);
-  near(r.tax, 8040 * 0.0246 + (48250 - 8040) * 0.0351 + (taxable - 48250) * 0.0455 - 4 * 171);
+  near(r.tax, 8260 * 0.0246 + (49520 - 8260) * 0.0351 + (taxable - 49520) * 0.0455 - 4 * 176);
+});
+
+test("Nebraska: schedules match the 2026 tax table at $79,860 (to the dollar)", () => {
+  const NE = S.get("NE");
+  near(S.bracketTax(79860, NE.brackets.single), 3333, 0.5);
+  near(S.bracketTax(79860, NE.brackets.mfj), 3032, 0.5);
 });
 
 // ---------- Kansas ----------
+// K.S.A. 79-32,110: 5.2% up to $23,000 ($46,000 joint), 5.58% above. Standard deduction and exemptions are fixed
+// amounts (79-32,119 and 79-32,121).
 
 test("Kansas: single", () => {
   const r = S.compute("KS", single());
-  const taxable = 52250 - 3605 - 9160;
+  const taxable = 52250 - 3605 - 9160; // 39,485
   near(r.taxable, taxable);
   near(r.tax, 23000 * 0.052 + (taxable - 23000) * 0.0558);
+  near(r.supplementalRate, 0.05);
 });
 
 test("Kansas: married filing jointly, two children", () => {
   const r = S.compute("KS", family());
-  const taxable = 135250 - 8240 - 2 * 9160 - 2 * 2320;
+  const taxable = 135250 - 8240 - 2 * 9160 - 2 * 2320; // 104,050
   near(r.taxable, taxable);
   near(r.tax, 46000 * 0.052 + (taxable - 46000) * 0.0558);
 });
 
+test("Kansas: head of household gets an extra $2,320 exemption", () => {
+  const r = S.compute("KS", single({ status: "hoh", dependents: 2 }));
+  const taxable = 52250 - 6180 - 9160 - 2320 - 2 * 2320; // 29,950
+  near(r.taxable, taxable);
+  near(r.tax, 23000 * 0.052 + (taxable - 23000) * 0.0558);
+});
+
 // ---------- Minnesota ----------
+// 2026 brackets, $15,300 / $30,600 / $23,000 standard deduction and $5,300 dependent exemption.
 
 test("Minnesota: single", () => {
   const r = S.compute("MN", single());
-  const taxable = 52250 - 14950;
+  const taxable = 52250 - 15300; // 36,950
   near(r.taxable, taxable);
-  near(r.tax, 32570 * 0.0535 + (taxable - 32570) * 0.068);
+  near(r.tax, 33310 * 0.0535 + (taxable - 33310) * 0.068);
+  near(r.supplementalRate, 0.0625);
 });
 
 test("Minnesota: married filing jointly, two children", () => {
   const r = S.compute("MN", family());
-  const taxable = 135250 - 29900 - 2 * 5200;
+  const taxable = 135250 - 30600 - 2 * 5300; // 94,050
   near(r.taxable, taxable);
-  near(r.tax, 47620 * 0.0535 + (taxable - 47620) * 0.068);
+  near(r.tax, 48700 * 0.0535 + (taxable - 48700) * 0.068);
 });
 
-test("Minnesota: standard deduction shrinks by 3% of AGI over $238,950", () => {
-  const r = S.compute("MN", earner(300000));
-  const taxable = 300000 - (14950 - 0.03 * (300000 - 238950));
-  near(r.taxable, taxable);
-  near(r.tax, 32570 * 0.0535 + (106990 - 32570) * 0.068 + (198630 - 106990) * 0.0785 + (taxable - 198630) * 0.0985);
+test("Minnesota: standard deduction shrinks 3% over $244,400, 10% over $337,800, by at most 80%", () => {
+  const mid = S.compute("MN", earner(300000));
+  const midTaxable = 300000 - (15300 - 0.03 * (300000 - 244400));
+  near(mid.taxable, midTaxable);
+  near(mid.tax, 33310 * 0.0535 + (109430 - 33310) * 0.068 + (203150 - 109430) * 0.0785 + (midTaxable - 203150) * 0.0985);
+  const high = S.compute("MN", earner(400000));
+  near(high.taxable, 400000 - (15300 - (0.03 * (337800 - 244400) + 0.1 * (400000 - 337800))));
+  // At $450,000 the cut (2,802 + 11,220) passes 80% of the deduction, so 20% of it is left.
+  near(S.compute("MN", earner(450000)).taxable, 450000 - 0.2 * 15300);
 });
 
-test("Minnesota Paid Leave: 0.44% employee share to the $184,500 cap", () => {
+test("Minnesota: dependent exemption loses 2% per $2,500 of AGI over $244,500 (single)", () => {
+  const r = S.compute("MN", earner(250000, { dependents: 1 }));
+  const steps = Math.ceil((250000 - 244500) / 2500); // 3
+  near(r.taxable, 250000 - (15300 - 0.03 * (250000 - 244400)) - 5300 * (1 - 0.02 * steps));
+});
+
+test("Minnesota Paid Leave: 0.44% employee share, wages capped at $185,000", () => {
   near(S.compute("MN", single()).payroll[0][0].amount, 55000 * 0.0044);
   const fam = S.compute("MN", family());
   near(fam.payroll[0][0].amount, 95000 * 0.0044);
   near(fam.payroll[1][0].amount, 45000 * 0.0044);
-  near(S.compute("MN", earner(200000)).payroll[0][0].amount, 184500 * 0.0044);
+  near(S.compute("MN", earner(200000)).payroll[0][0].amount, 185000 * 0.0044); // $814, Paid Leave's 2026 maximum
 });
 
 // ---------- Cross-state ----------
 
 test("no West/Plains state taxes traditional 401(k) deferrals", () => {
   for (const code of CODES) assert.equal(S.get(code).taxes401k, false, code);
+});
+
+test("of the six Plains states, only Montana and North Dakota pass the federal overtime deduction through", () => {
+  for (const code of ["MT", "ND"]) assert.equal(S.get(code).overtimeDeduction, true, code);
+  for (const code of ["NM", "NE", "KS", "MN"]) assert.equal(S.get(code).overtimeDeduction, false, code);
+});
+
+test("Kansas and Montana are verified; NM, ND, NE and MN still carry the unverified flag", () => {
+  for (const code of ["KS", "MT"]) assert.equal(S.compute(code, single()).unverified, false, code);
+  for (const code of ["NM", "ND", "NE", "MN"]) assert.equal(S.compute(code, single()).unverified, true, code);
 });
