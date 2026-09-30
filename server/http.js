@@ -2,6 +2,9 @@
 
 const net = require("node:net");
 
+/** @typedef {import("../types/server").Req} Req */
+/** @typedef {import("../types/server").Res} Res */
+
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -16,6 +19,11 @@ const CSP = [
 ].join("; ");
 
 class HttpError extends Error {
+  /**
+   * @param {number} status
+   * @param {string} message
+   * @param {Record<string, string>} [headers]
+   */
   constructor(status, message, headers) {
     super(message);
     this.status = status;
@@ -23,15 +31,24 @@ class HttpError extends Error {
   }
 }
 
+/** @param {string | string[] | undefined} value */
 function firstHeader(value) {
   return String(Array.isArray(value) ? value[0] : value || "").split(",")[0].trim();
 }
 
-/** True when the browser reached us over HTTPS (directly or through Railway's proxy). */
+/**
+ * True when the browser reached us over HTTPS (directly or through Railway's proxy).
+ * @param {Req} req
+ */
 function isSecure(req) {
-  return Boolean(req.socket && req.socket.encrypted) || firstHeader(req.headers["x-forwarded-proto"]).toLowerCase() === "https";
+  // `encrypted` is only set on TLS sockets.
+  return Boolean(req.socket && /** @type {{ encrypted?: boolean }} */ (req.socket).encrypted) || firstHeader(req.headers["x-forwarded-proto"]).toLowerCase() === "https";
 }
 
+/**
+ * @param {Req} req
+ * @param {Res} res
+ */
 function securityHeaders(req, res) {
   res.setHeader("Content-Security-Policy", CSP);
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -41,7 +58,11 @@ function securityHeaders(req, res) {
   if (isSecure(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000");
 }
 
-/** Client IP. X-Forwarded-For is only honored when trustProxy is set (number of trusted hops). */
+/**
+ * Client IP. X-Forwarded-For is only honored when trustProxy is set (number of trusted hops).
+ * @param {Req} req
+ * @param {number} trustProxy
+ */
 function clientIp(req, trustProxy) {
   const socketIp = (req.socket && req.socket.remoteAddress) || "unknown";
   if (!trustProxy) return normalizeIp(socketIp);
@@ -52,12 +73,19 @@ function clientIp(req, trustProxy) {
   return normalizeIp(hops[idx]);
 }
 
+/** @param {string} ip */
 function normalizeIp(ip) {
   ip = String(ip).replace(/^\[|\]$/g, "");
   if (ip.startsWith("::ffff:") && net.isIPv4(ip.slice(7))) ip = ip.slice(7);
   return ip;
 }
 
+/**
+ * @param {Res} res
+ * @param {number} status
+ * @param {unknown} body
+ * @param {import("node:http").OutgoingHttpHeaders} [headers]
+ */
 function sendJson(res, status, body, headers = {}) {
   const buf = Buffer.from(JSON.stringify(body));
   res.writeHead(status, {
@@ -69,11 +97,22 @@ function sendJson(res, status, body, headers = {}) {
   res.end(buf);
 }
 
+/**
+ * @param {Res} res
+ * @param {number} status
+ * @param {string} message
+ * @param {import("node:http").OutgoingHttpHeaders} [headers]
+ */
 function sendError(res, status, message, headers) {
   sendJson(res, status, { error: message }, headers);
 }
 
-/** Read and parse a JSON body, enforcing a byte limit. */
+/**
+ * Read and parse a JSON body, enforcing a byte limit. The result is unvalidated.
+ * @param {Req} req
+ * @param {number} limit bytes
+ * @returns {Promise<unknown>}
+ */
 function readJson(req, limit) {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"]);
@@ -81,10 +120,11 @@ function readJson(req, limit) {
       req.resume();
       return reject(new HttpError(413, "Request body too large.", { Connection: "close" }));
     }
+    /** @type {Buffer[]} */
     const chunks = [];
     let size = 0;
     let done = false;
-    req.on("data", (chunk) => {
+    req.on("data", (/** @type {Buffer} */ chunk) => {
       if (done) return;
       size += chunk.length;
       if (size > limit) {
@@ -112,7 +152,12 @@ function readJson(req, limit) {
   });
 }
 
+/**
+ * @param {string | undefined} header
+ * @returns {Record<string, string>}
+ */
 function parseCookies(header) {
+  /** @type {Record<string, string>} */
   const out = {};
   for (const part of String(header || "").split(";")) {
     const i = part.indexOf("=");
@@ -126,6 +171,11 @@ function parseCookies(header) {
   return out;
 }
 
+/**
+ * @param {string} name
+ * @param {string} value
+ * @param {{ maxAge?: number, secure?: boolean, httpOnly?: boolean, sameSite?: string, path?: string }} [opts]
+ */
 function serializeCookie(name, value, { maxAge, secure, httpOnly = true, sameSite = "Lax", path = "/" } = {}) {
   let c = `${name}=${encodeURIComponent(value)}; Path=${path}; SameSite=${sameSite}`;
   if (maxAge !== undefined) c += `; Max-Age=${Math.floor(maxAge)}`;

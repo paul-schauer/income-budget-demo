@@ -9,6 +9,18 @@
 (function () {
   "use strict";
 
+  /**
+   * Chromium's install prompt event (not in the DOM typings).
+   * @typedef {Event & { prompt(): Promise<unknown>, userChoice: Promise<{ outcome: string, platform: string }> }} InstallPromptEvent
+   */
+  /**
+   * showNotice() options. A button (`action`) always comes with its `onAction` handler.
+   * @typedef {{ id: string, text: string, icon?: string, onDismiss?: () => void, dismissLabel?: string }
+   *   & ({ action?: undefined, onAction?: undefined }
+   *     | { action: string, onAction: (close: () => void, button: HTMLButtonElement) => void })} NoticeOptions
+   */
+  /** @typedef {{ el: HTMLDivElement, close: () => void }} Notice */
+
   const root = document.documentElement;
   const IOS_HINT_KEY = "incomebudget:pwa:iosHintDismissed";
   const UPDATE_CHECK_MS = 60 * 60 * 1000;
@@ -42,6 +54,7 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
     document.head.appendChild(style);
   }
 
+  /** @type {HTMLDivElement | null} */
   let noticesEl = null;
   function notices() {
     if (!noticesEl) {
@@ -52,7 +65,11 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
     return noticesEl;
   }
 
-  /** A small card at the bottom of the screen. Returns { el, close }. */
+  /**
+   * A small card at the bottom of the screen. Returns { el, close }.
+   * @param {NoticeOptions} opts
+   * @returns {Notice}
+   */
   function showNotice({ id, text, icon, action, onAction, onDismiss, dismissLabel = "Dismiss" }) {
     const old = document.getElementById(id);
     if (old) old.remove();
@@ -95,11 +112,13 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
     try {
       if (window.matchMedia("(display-mode: standalone)").matches) return true;
     } catch (_) { /* ignore */ }
-    return navigator.standalone === true;
+    // iOS Safari only, and not in the DOM typings.
+    return /** @type {Navigator & { standalone?: boolean }} */ (navigator).standalone === true;
   }
 
   // ---------- Offline indicator ----------
 
+  /** @type {HTMLSpanElement | null} */
   let offlineBadge = null;
   function setupOffline() {
     const anchor = document.getElementById("taxYearBadge");
@@ -124,8 +143,11 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
 
   // ---------- Install ----------
 
+  /** @type {InstallPromptEvent | null} */
   let installPrompt = null;
+  /** @type {HTMLButtonElement | null} */
   let installBtn = null;
+  /** @type {Notice | null} */
   let iosHint = null;
 
   function setupInstall() {
@@ -163,7 +185,7 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
   // Listen right away (not after DOMContentLoaded) so an early event isn't missed.
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault(); // show our own button instead of the browser's banner
-    installPrompt = e;
+    installPrompt = /** @type {InstallPromptEvent} */ (e);
     showInstall();
   });
 
@@ -214,6 +236,7 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
       if (wantReload) reload();
     });
 
+    /** @param {ServiceWorkerRegistration} reg */
     function promptUpdate(reg) {
       showNotice({
         id: "pwaUpdate",
@@ -231,6 +254,7 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
       });
     }
 
+    /** @param {ServiceWorkerRegistration | undefined} reg */
     function watch(reg) {
       if (!reg) return;
       // An update installed during an earlier visit is already waiting.
@@ -270,13 +294,15 @@ body:has(#toast:not([hidden])) .pwa-notices { bottom: calc(88px + env(safe-area-
     const metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
     if (!metas.length) return;
     const original = metas.map((m) => m.getAttribute("content"));
+    /** @param {string | undefined} theme */
     const colorFor = (theme) => {
       const i = theme ? metas.findIndex((el) => (el.getAttribute("media") || "").includes(`: ${theme}`)) : -1;
       return i >= 0 ? original[i] : null;
     };
     const apply = () => {
       const color = colorFor(root.dataset.theme);
-      metas.forEach((m, i) => m.setAttribute("content", color || original[i]));
+      // setAttribute would turn a null into "null" itself; String() just makes that explicit.
+      metas.forEach((m, i) => m.setAttribute("content", String(color || original[i])));
     };
     new MutationObserver(apply).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
     apply();

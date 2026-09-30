@@ -15,6 +15,9 @@
  */
 "use strict";
 
+// The worker's global scope, typed as a service worker (the WebWorker lib types `self` as a generic worker).
+const sw = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
 const VERSION = "v1";
 const CACHE_PREFIX = "incomebudget-";
 const CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
@@ -56,21 +59,29 @@ const PRECACHE = [
 
 const STATIC_EXT = /\.(?:js|mjs|css|png|svg|ico|webp|jpe?g|gif|woff2?|webmanifest)$/i;
 
-const scopeUrl = () => new URL(self.registration ? self.registration.scope : "./", self.location.href);
+const scopeUrl = () => new URL(sw.registration ? sw.registration.scope : "./", sw.location.href);
+/** @param {string} path */
 const toUrl = (path) => new URL(path, scopeUrl()).href;
 const shellUrl = () => toUrl("index.html");
 
-/** True for /api and /api/... at the origin root or under the scope. */
+/**
+ * True for /api and /api/... at the origin root or under the scope.
+ * @param {URL} url
+ */
 function isApi(url) {
   const scopePath = scopeUrl().pathname;
   return [`/api`, `${scopePath}api`].some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`));
 }
 
+/** @param {Response} response */
 function isCacheable(response) {
   return Boolean(response) && response.ok && response.type === "basic";
 }
 
-/** A redirected response can't answer a navigation, so store a clean copy. */
+/**
+ * A redirected response can't answer a navigation, so store a clean copy.
+ * @param {Response} response
+ */
 async function cleanResponse(response) {
   if (!response.redirected) return response;
   const body = await response.blob();
@@ -79,7 +90,7 @@ async function cleanResponse(response) {
 
 // ---------- Lifecycle ----------
 
-self.addEventListener("install", (event) => {
+sw.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     // Fetch everything fresh (bypass the HTTP cache); fail the install if any asset is missing.
@@ -93,7 +104,7 @@ self.addEventListener("install", (event) => {
   // No skipWaiting() here: the page asks for it (SKIP_WAITING) when the user chooses to reload.
 });
 
-self.addEventListener("activate", (event) => {
+sw.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
     await Promise.all(keys
@@ -102,19 +113,19 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
-self.addEventListener("message", (event) => {
+sw.addEventListener("message", (event) => {
   const data = event.data;
-  if (data === "SKIP_WAITING" || (data && data.type === "SKIP_WAITING")) self.skipWaiting();
+  if (data === "SKIP_WAITING" || (data && data.type === "SKIP_WAITING")) sw.skipWaiting();
 });
 
 // ---------- Fetch ----------
 
-self.addEventListener("fetch", (event) => {
+sw.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return; // writes always go straight to the network
 
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== sw.location.origin) return;
   if (isApi(url)) return; // auth + sync: never cached, never intercepted
 
   if (request.mode === "navigate") {
@@ -132,7 +143,11 @@ async function cachedShell() {
   return (await cache.match(shellUrl(), { ignoreVary: true })) || null;
 }
 
-/** The app is one page, so a fresh copy of the scope root or index.html refreshes the shell. */
+/**
+ * The app is one page, so a fresh copy of the scope root or index.html refreshes the shell.
+ * @param {Request} request
+ * @param {Response} response
+ */
 function isShellResponse(request, response) {
   if (!isCacheable(response) || response.redirected) return false;
   if (!(response.headers.get("content-type") || "").includes("text/html")) return false;
@@ -141,6 +156,10 @@ function isShellResponse(request, response) {
   return path === scopePath || path === `${scopePath}index.html`;
 }
 
+/**
+ * @param {FetchEvent} event
+ * @returns {Promise<Response>}
+ */
 function networkFirstShell(event) {
   const request = event.request;
   const fromNetwork = fetch(request);
@@ -153,6 +172,7 @@ function networkFirstShell(event) {
     return caches.open(CACHE).then((cache) => cache.put(shellUrl(), copy));
   }).catch(() => {}));
 
+  /** @type {Promise<null>} */
   const timedOut = new Promise((resolve) => setTimeout(resolve, NAV_TIMEOUT_MS, null));
   const usable = fromNetwork.then((response) => (response.status >= 500 ? null : response), () => null);
 
@@ -163,6 +183,10 @@ function networkFirstShell(event) {
   });
 }
 
+/**
+ * @param {FetchEvent} event
+ * @returns {Promise<Response>}
+ */
 function staleWhileRevalidate(event) {
   const request = event.request;
   let stored = Promise.resolve();

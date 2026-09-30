@@ -4,6 +4,11 @@ const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
 
+/**
+ * @param {string | undefined} value
+ * @param {boolean} fallback
+ * @returns {boolean}
+ */
 function flag(value, fallback) {
   if (value === undefined || value === null || String(value).trim() === "") return fallback;
   return !/^(0|false|no|off)$/i.test(String(value).trim());
@@ -16,6 +21,8 @@ function flag(value, fallback) {
  *   "true"                 -> trust every hop; the client is the leftmost entry
  * On Railway (RAILWAY_ENVIRONMENT* is set) it defaults to 1, because every request
  * arrives through Railway's edge proxy.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {number}
  */
 function parseTrustProxy(env) {
   const raw = env.TRUST_PROXY;
@@ -29,9 +36,14 @@ function parseTrustProxy(env) {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {import("../types/server").ServerConfig}
+ */
 function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || "production";
-  const port = Number.parseInt(env.PORT, 10);
+  const port = Number.parseInt(String(env.PORT), 10);
+  /** @type {string | null} */
   let dataFile = null;
   if (env.DATA_FILE) dataFile = path.resolve(ROOT, env.DATA_FILE);
   else if (nodeEnv === "development") dataFile = path.join(ROOT, "data", "dev-db.json");

@@ -19,6 +19,17 @@
 (function () {
   "use strict";
 
+  /** @typedef {import("../types/app").AppState} AppState */
+  /** @typedef {import("../types/sync").SyncStatus} SyncStatus */
+  /** @typedef {import("../types/sync").SyncMeta} SyncMeta */
+  /** @typedef {import("../types/sync").SyncDoc} SyncDoc */
+  /** @typedef {import("../types/sync").LooseItem} LooseItem */
+  /** @typedef {import("../types/sync").SyncApiBody} SyncApiBody */
+  /** @typedef {import("../types/sync").SyncApiResult} SyncApiResult */
+  /** @typedef {import("../types/sync").SyncConflict} SyncConflict */
+  /** @typedef {import("../types/sync").AuthForm} AuthForm */
+  /** @typedef {import("../types/sync").DeleteForm} DeleteForm */
+
   if (!window.App) return;
 
   const META_KEY = "incomebudget:sync";
@@ -29,6 +40,7 @@
   const MIN_PASSWORD = 8;
   const OFFLINE_DETAIL = "Changes are saved on this device and will sync when you're back online.";
 
+  /** @type {Record<SyncStatus, string>} */
   const LABELS = {
     synced: "Synced",
     syncing: "Syncing…",
@@ -40,10 +52,12 @@
   const ICON_USER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>';
   const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  /** @param {unknown} s */
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => /** @type {Record<string, string>} */ ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
   // ---------- Sync metadata ----------
 
+  /** @returns {SyncMeta} this module's own storage, so its fields are trusted as written */
   function readMeta() {
     try {
       const m = JSON.parse(localStorage.getItem(META_KEY) || "null");
@@ -55,6 +69,7 @@
   function writeMeta() {
     try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (_) { /* storage unavailable */ }
   }
+  /** @param {SyncMeta} [keep] */
   function clearMeta(keep = {}) {
     meta = { ...keep };
     try {
@@ -68,24 +83,40 @@
   // ---------- Runtime state ----------
 
   let enabled = false; // the sync server exists (or we were signed in and are offline)
+  /** @type {string | null} */
   let email = null; // signed-in account
   let confirmed = false; // session checked with the server this page load
+  /** @type {SyncStatus} */
   let status = "synced";
   let statusDetail = "";
+  /** @type {SyncConflict | null} */
   let conflict = null; // server copy waiting for the user's choice
+  /** @type {ReturnType<typeof setTimeout> | null} */
   let pushTimer = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
   let retryTimer = null;
   let retryDelay = 0;
+  /** @type {Promise<unknown>} */
   let chain = Promise.resolve();
 
+  /** @type {HTMLElement | null} */
   let slot = null;
+  /** @type {HTMLElement | null} */
   let dialogRoot = null;
+  /** @type {HTMLDialogElement | null} */
   let dialog = null;
-  let opener = null;
+  /** @type {(Element & HTMLOrSVGElement) | null} */
+  let opener = null; // element to refocus when the dialog closes
+  /** @type {HTMLElement | null} */
   let noteEl = null;
   let noteText = "";
 
-  /** Run network sync steps one at a time. */
+  /**
+   * Run network sync steps one at a time.
+   * @template T
+   * @param {() => T | PromiseLike<T>} fn
+   * @returns {Promise<T>}
+   */
   function serial(fn) {
     const p = chain.then(fn, fn);
     chain = p.catch(() => {});
@@ -94,6 +125,13 @@
 
   // ---------- HTTP ----------
 
+  /**
+   * @param {string} method
+   * @param {string} path
+   * @param {unknown} [body]
+   * @param {{ keepalive?: boolean }} [opts]
+   * @returns {Promise<SyncApiResult>}
+   */
   async function api(method, path, body, { keepalive = false } = {}) {
     const ctrl = typeof AbortController === "function" ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT) : null;
@@ -107,9 +145,10 @@
         keepalive,
         signal: ctrl ? ctrl.signal : undefined,
       });
+      /** @type {unknown} */
       let json = null;
       try { json = await res.json(); } catch (_) { /* not JSON */ }
-      return { status: res.status, ok: res.ok, json: json && typeof json === "object" ? json : {} };
+      return { status: res.status, ok: res.ok, json: json && typeof json === "object" ? /** @type {SyncApiBody} */ (json) : {} };
     } catch (_) {
       return { status: 0, ok: false, json: {} }; // offline, DNS, timeout...
     } finally {
@@ -120,25 +159,41 @@
   // ---------- Helpers ----------
 
   const hasLocalChanges = () => Number(App.state().updatedAt) !== Number(meta.syncedAt);
+  /** @param {SyncDoc | null | undefined} doc */
   const isUntouched = (doc) => !doc || !Number(doc.updatedAt);
 
-  /** JSON with sorted keys, ignoring updatedAt, to compare two state documents. */
+  /**
+   * JSON with sorted keys, ignoring updatedAt, to compare two state documents.
+   * @param {unknown} doc
+   */
   function fingerprint(doc) {
+    /**
+     * @param {unknown} v
+     * @returns {unknown}
+     */
     const walk = (v) => {
       if (Array.isArray(v)) return v.map(walk);
       if (v && typeof v === "object") {
+        const obj = /** @type {Record<string, unknown>} */ (v);
+        /** @type {Record<string, unknown>} */
         const out = {};
-        for (const k of Object.keys(v).sort()) if (v[k] !== undefined) out[k] = walk(v[k]);
+        for (const k of Object.keys(obj).sort()) if (obj[k] !== undefined) out[k] = walk(obj[k]);
         return out;
       }
       return v;
     };
+    /** @type {Record<string, unknown>} */
     const copy = JSON.parse(JSON.stringify(doc || {}));
     delete copy.updatedAt;
     return JSON.stringify(walk(copy));
   }
+  /**
+   * @param {unknown} a
+   * @param {unknown} b
+   */
   const sameData = (a, b) => fingerprint(a) === fingerprint(b);
 
+  /** @param {number | undefined} ms */
   function ago(ms) {
     if (!ms) return "";
     const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -150,13 +205,17 @@
     return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   }
 
+  /** @param {string | number | null | undefined} value */
   function when(value) {
-    const d = new Date(value);
+    // new Date() accepts null and undefined too; either way the !value check below applies.
+    const d = new Date(/** @type {string | number} */ (value));
     if (!value || Number.isNaN(d.getTime())) return "Not changed yet";
     return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   }
 
+  /** @param {SyncDoc | null | undefined} doc */
   function summary(doc) {
+    /** @param {unknown} v */
     const count = (v) => (Array.isArray(v) ? v.length : 0);
     const items = count(doc && doc.items);
     const goals = count(doc && doc.goals);
@@ -165,12 +224,19 @@
     return parts.join(", ");
   }
 
-  /** Names of budget items in `doc` that `other` doesn't have (by id), for the conflict prompt. */
+  /**
+   * Names of budget items in `doc` that `other` doesn't have (by id), for the conflict prompt.
+   * @param {SyncDoc | null | undefined} doc
+   * @param {SyncDoc | null | undefined} other
+   */
   function onlyIn(doc, other) {
-    const ids = new Set((Array.isArray(other && other.items) ? other.items : []).map((i) => i && i.id));
-    const names = (Array.isArray(doc && doc.items) ? doc.items : [])
+    const theirs = other && other.items;
+    const mine = doc && doc.items;
+    // Neither document is validated: check each list, then look at its entries loosely.
+    const ids = new Set((Array.isArray(theirs) ? /** @type {LooseItem[]} */ (theirs) : []).map((i) => i && i.id));
+    const names = (Array.isArray(mine) ? /** @type {LooseItem[]} */ (mine) : [])
       .filter((i) => i && !ids.has(i.id) && typeof i.name === "string")
-      .map((i) => i.name);
+      .map((i) => /** @type {{ name: string }} */ (i).name); // the filter kept only string names
     if (!names.length) return "";
     const shown = names.slice(0, 3).join(", ");
     return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
@@ -178,6 +244,10 @@
 
   // ---------- Status & header ----------
 
+  /**
+   * @param {SyncStatus} next
+   * @param {string} [detail]
+   */
   function setStatus(next, detail = "") {
     status = next;
     statusDetail = detail;
@@ -194,12 +264,12 @@
       slot.innerHTML = kind === "signin"
         ? `<button type="button" class="btn ghost sync-btn" data-kind="signin" aria-haspopup="dialog">${ICON_USER}<span>Sign in</span></button>`
         : `<button type="button" class="btn ghost sync-btn" data-kind="status" aria-haspopup="dialog"><span class="sync-dot" aria-hidden="true"></span><span class="sync-label"></span></button>`;
-      btn = slot.querySelector("button");
+      btn = /** @type {HTMLButtonElement} */ (slot.querySelector("button")); // just rendered
     }
     if (kind === "status") {
       const label = LABELS[status] || LABELS.synced;
       btn.dataset.status = status;
-      btn.querySelector(".sync-label").textContent = label;
+      /** @type {HTMLElement} */ (btn.querySelector(".sync-label")).textContent = label;
       btn.title = statusDetail || `Signed in as ${email}`;
       btn.setAttribute("aria-label", `${label}. Account menu for ${email}`);
     } else {
@@ -214,8 +284,9 @@
     if (noteEl.textContent !== text) noteEl.textContent = text;
   }
 
+  /** @param {MouseEvent} e */
   function onSlotClick(e) {
-    const btn = e.target.closest("button");
+    const btn = /** @type {Element} */ (e.target).closest("button");
     if (!btn) return;
     if (btn.dataset.kind === "signin") openAuth("signin");
     else if (conflict) openConflict();
@@ -224,6 +295,7 @@
 
   // ---------- Session ----------
 
+  /** @param {string} addr */
   function becomeSignedIn(addr) {
     if (meta.email !== addr) clearMeta({ email: addr }); // different account: start fresh
     email = addr;
@@ -232,9 +304,10 @@
     renderSlot();
   }
 
+  /** @param {string} [message] toast to show */
   function becomeSignedOut(message) {
-    clearTimeout(pushTimer);
-    clearTimeout(retryTimer);
+    clearTimeout(pushTimer ?? undefined);
+    clearTimeout(retryTimer ?? undefined);
     pushTimer = retryTimer = null;
     retryDelay = 0;
     email = null;
@@ -247,7 +320,10 @@
     if (message) App.showToast(message);
   }
 
-  /** Ask the server who we are. Run inside serial(). */
+  /**
+   * Ask the server who we are. Run inside serial().
+   * @param {{ announce?: boolean }} [opts]
+   */
   async function checkSession({ announce = false } = {}) {
     const me = await api("GET", "me");
     if (me.status === 200 && me.json.email) {
@@ -268,7 +344,10 @@
 
   // ---------- Sync ----------
 
-  /** Pull the server copy and decide what to do with it. Run inside serial(). */
+  /**
+   * Pull the server copy and decide what to do with it. Run inside serial().
+   * @param {{ announce?: boolean, quiet?: boolean }} [opts]
+   */
   async function pullAndDecide({ announce = false, quiet = false } = {}) {
     if (!email || conflict) return;
     if (!quiet) setStatus("syncing");
@@ -279,7 +358,11 @@
     await decide(res.json, { announce, fromPull: !announce });
   }
 
-  /** Given the server copy {data, version, updatedAt}, push, pull or ask. */
+  /**
+   * Given the server copy {data, version, updatedAt}, push, pull or ask.
+   * @param {SyncApiBody} server
+   * @param {{ announce?: boolean, fromPull?: boolean }} [opts]
+   */
   async function decide(server, { announce = false, fromPull = false } = {}) {
     const local = App.state();
     const version = Number(server.version) || 0;
@@ -315,6 +398,7 @@
     askConflict(server);
   }
 
+  /** @param {SyncApiBody | SyncConflict} server */
   function takeServer(server) {
     App.replaceState(server.data);
     meta.version = Number(server.version) || 0;
@@ -327,20 +411,25 @@
     meta.lastSync = Date.now();
     writeMeta();
     retryDelay = 0;
-    clearTimeout(retryTimer);
+    clearTimeout(retryTimer ?? undefined);
     setStatus("synced");
   }
 
+  /** @param {SyncApiBody} server */
   function askConflict(server) {
     conflict = { data: server.data, version: Number(server.version) || 0, updatedAt: server.updatedAt };
-    clearTimeout(pushTimer);
+    clearTimeout(pushTimer ?? undefined);
     setStatus("paused", "Choose which data to keep");
     openConflict();
   }
 
-  /** PUT the local state. Run inside serial(). */
+  /**
+   * PUT the local state. Run inside serial().
+   * @param {{ force?: boolean, keepalive?: boolean }} [opts]
+   * @returns {Promise<void>}
+   */
   async function pushNow({ force = false, keepalive = false } = {}) {
-    clearTimeout(pushTimer);
+    clearTimeout(pushTimer ?? undefined);
     pushTimer = null;
     if (!email || conflict) return;
     if (!force && !hasLocalChanges()) { setStatus("synced"); return; }
@@ -363,6 +452,7 @@
     failed(res);
   }
 
+  /** @param {SyncApiResult} res */
   function failed(res) {
     if (res.status === 401) return becomeSignedOut("You were signed out. Sign in again to keep syncing.");
     if (res.status === 413) return setStatus("error", "Your data is too large to sync (1 MB limit).");
@@ -372,19 +462,19 @@
   }
 
   function scheduleRetry() {
-    clearTimeout(retryTimer);
+    clearTimeout(retryTimer ?? undefined);
     retryDelay = Math.min(Math.max(5000, retryDelay * 2), 5 * 60 * 1000);
     retryTimer = setTimeout(syncNow, retryDelay);
   }
 
   function schedulePush(delay = PUSH_DELAY) {
-    clearTimeout(pushTimer);
+    clearTimeout(pushTimer ?? undefined);
     pushTimer = setTimeout(() => { pushTimer = null; serial(() => pushNow()); }, delay);
   }
 
   /** Full round trip: confirm the session if needed, then pull (which pushes if needed). */
   function syncNow() {
-    clearTimeout(retryTimer);
+    clearTimeout(retryTimer ?? undefined);
     if (!enabled || !email || conflict) return Promise.resolve();
     if (!confirmed) return serial(() => checkSession());
     return serial(() => pullAndDecide({ quiet: status === "offline" }));
@@ -408,7 +498,7 @@
   /** Page is being hidden: send a pending push right away. */
   function flushPush() {
     if (!pushTimer || !email || conflict) return;
-    clearTimeout(pushTimer);
+    clearTimeout(pushTimer ?? undefined);
     pushTimer = null;
     let small = false;
     try { small = JSON.stringify(App.state()).length < KEEPALIVE_MAX; } catch (_) { /* ignore */ }
@@ -417,36 +507,46 @@
 
   // ---------- Dialog ----------
 
+  /**
+   * Create the dialog on first use. Only reached once start() has found dialogRoot and slot.
+   * @returns {HTMLDialogElement}
+   */
   function ensureDialog() {
     if (dialog) return dialog;
-    dialog = document.createElement("dialog");
-    dialog.className = "sync-dialog";
-    dialog.setAttribute("aria-labelledby", "syncDlgTitle");
-    dialogRoot.appendChild(dialog);
-    dialog.addEventListener("click", onDialogClick);
-    dialog.addEventListener("submit", onDialogSubmit);
-    dialog.addEventListener("close", () => {
-      if (dialog.open) return; // reopened before this event fired
-      dialog.dataset.view = "";
-      const back = opener && document.contains(opener) ? opener : slot.querySelector("button");
+    const dlg = document.createElement("dialog");
+    dialog = dlg;
+    dlg.className = "sync-dialog";
+    dlg.setAttribute("aria-labelledby", "syncDlgTitle");
+    /** @type {HTMLElement} */ (dialogRoot).appendChild(dlg);
+    dlg.addEventListener("click", onDialogClick);
+    dlg.addEventListener("submit", onDialogSubmit);
+    dlg.addEventListener("close", () => {
+      if (dlg.open) return; // reopened before this event fired
+      dlg.dataset.view = "";
+      const back = opener && document.contains(opener) ? opener : /** @type {HTMLElement} */ (slot).querySelector("button");
       opener = null;
-      if (back && (document.activeElement === document.body || dialog.contains(document.activeElement))) back.focus();
+      if (back && (document.activeElement === document.body || dlg.contains(document.activeElement))) back.focus();
     });
     // Clicking the backdrop closes the dialog.
-    dialog.addEventListener("mousedown", (e) => { dialog.dataset.downOnBackdrop = String(e.target === dialog); });
-    return dialog;
+    dlg.addEventListener("mousedown", (e) => { dlg.dataset.downOnBackdrop = String(e.target === dlg); });
+    return dlg;
   }
 
+  /**
+   * @param {string} view
+   * @param {string} html
+   * @param {string} [focusSel] what to focus once it's shown
+   */
   function showDialog(view, html, focusSel) {
-    ensureDialog();
-    if (!dialog.open) opener = document.activeElement;
+    const dialog = ensureDialog();
+    if (!dialog.open) opener = /** @type {(Element & HTMLOrSVGElement) | null} */ (document.activeElement);
     dialog.dataset.view = view;
     dialog.innerHTML = `<div class="sync-dlg">${html}</div>`;
     if (!dialog.open) {
       if (typeof dialog.showModal === "function") dialog.showModal();
       else dialog.setAttribute("open", "");
     }
-    const target = focusSel && dialog.querySelector(focusSel);
+    const target = focusSel && /** @type {HTMLElement | null} */ (dialog.querySelector(focusSel));
     if (target) target.focus();
   }
 
@@ -456,12 +556,17 @@
     else { dialog.removeAttribute("open"); dialog.dispatchEvent(new Event("close")); }
   }
 
+  /** @param {string} title */
   const head = (title) => `
     <div class="sync-dlg-head">
       <h2 id="syncDlgTitle" tabindex="-1">${esc(title)}</h2>
       <button type="button" class="icon-btn" data-sync-act="close" aria-label="Close">${ICON_X}</button>
     </div>`;
 
+  /**
+   * @param {"signin" | "signup"} mode
+   * @param {{ emailValue?: string }} [opts]
+   */
   function openAuth(mode, { emailValue = "" } = {}) {
     const signup = mode === "signup";
     showDialog("auth", `
@@ -484,21 +589,27 @@
         <p class="sync-error" id="syncError" role="alert"></p>
         <button class="btn primary sync-wide" type="submit">${signup ? "Create account" : "Sign in"}</button>
       </form>`, emailValue ? "#syncPassword" : "#syncEmail");
-    dialog.setAttribute("aria-describedby", "syncLede");
+    /** @type {HTMLDialogElement} */ (dialog).setAttribute("aria-describedby", "syncLede"); // showDialog() created it
   }
 
-  /** Switch between Sign in and Create account without losing what was typed. */
+  /**
+   * Switch between Sign in and Create account without losing what was typed.
+   * @param {string | undefined} mode
+   */
   function setAuthMode(mode) {
-    const form = dialog.querySelector("form[data-form=auth]");
+    // Only reached from the auth view's own buttons, so the dialog and its parts exist.
+    const dlg = /** @type {HTMLDialogElement} */ (dialog);
+    /** @type {AuthForm | null} */
+    const form = dlg.querySelector("form[data-form=auth]");
     if (!form) return;
     const signup = mode === "signup";
     form.dataset.mode = signup ? "signup" : "signin";
-    for (const b of dialog.querySelectorAll("button[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === form.dataset.mode));
-    dialog.querySelector("#syncDlgTitle").textContent = signup ? "Create account" : "Sign in";
-    form.querySelector("button[type=submit]").textContent = signup ? "Create account" : "Sign in";
+    for (const b of /** @type {NodeListOf<HTMLButtonElement>} */ (dlg.querySelectorAll("button[data-mode]"))) b.setAttribute("aria-pressed", String(b.dataset.mode === form.dataset.mode));
+    /** @type {HTMLElement} */ (dlg.querySelector("#syncDlgTitle")).textContent = signup ? "Create account" : "Sign in";
+    /** @type {HTMLButtonElement} */ (form.querySelector("button[type=submit]")).textContent = signup ? "Create account" : "Sign in";
     form.password.setAttribute("autocomplete", signup ? "new-password" : "current-password");
     form.password.setAttribute("aria-describedby", signup ? "syncPwHint syncError" : "syncError");
-    dialog.querySelector("#syncPwHint").hidden = !signup;
+    /** @type {HTMLElement} */ (dlg.querySelector("#syncPwHint")).hidden = !signup;
     showError("");
   }
 
@@ -514,7 +625,7 @@
       <div class="sync-danger-zone">
         <button type="button" class="linklike sync-danger-link" data-sync-act="delete">Delete account…</button>
       </div>`, "[data-sync-act=sync-now]");
-    dialog.removeAttribute("aria-describedby");
+    /** @type {HTMLDialogElement} */ (dialog).removeAttribute("aria-describedby"); // showDialog() created it
     refreshAccountStatus();
   }
 
@@ -543,7 +654,7 @@
           <button type="submit" class="btn danger">Delete account</button>
         </div>
       </form>`, "#syncDeletePassword");
-    dialog.setAttribute("aria-describedby", "syncLede");
+    /** @type {HTMLDialogElement} */ (dialog).setAttribute("aria-describedby", "syncLede"); // showDialog() created it
   }
 
   function openConflict() {
@@ -551,6 +662,7 @@
     const local = App.state();
     const onlyServer = onlyIn(conflict.data, local);
     const onlyLocal = onlyIn(local, conflict.data);
+    /** @param {string} names */
     const extra = (names) => (names ? `<div class="sync-only">Only here: ${esc(names)}</div>` : "");
     showDialog("conflict", `
       ${head("Which data should we keep?")}
@@ -574,36 +686,52 @@
         <button type="button" class="btn sync-wide" data-sync-act="use-local">Replace account data with this device's data</button>
       </div>
       <p class="hint sync-note">Want a backup first? Close this and use Export. Sync stays paused until you choose.</p>`, "#syncDlgTitle");
-    dialog.setAttribute("aria-describedby", "syncLede");
+    /** @type {HTMLDialogElement} */ (dialog).setAttribute("aria-describedby", "syncLede"); // showDialog() created it
   }
 
+  /**
+   * @param {string} msg "" clears the error
+   * @param {string | null} [field] name of the input to mark and focus (default: mark them all)
+   */
   function showError(msg, field) {
     const box = dialog && dialog.querySelector("#syncError");
     if (box) box.textContent = msg || "";
-    for (const input of dialog.querySelectorAll("input")) {
+    // Only reached from the dialog's forms, so it exists.
+    const dlg = /** @type {HTMLDialogElement} */ (dialog);
+    for (const input of dlg.querySelectorAll("input")) {
       const bad = Boolean(msg) && (!field || input.name === field);
       input.classList.toggle("invalid", bad);
       if (bad) input.setAttribute("aria-invalid", "true");
       else input.removeAttribute("aria-invalid");
     }
-    const first = field && dialog.querySelector(`input[name="${field}"]`);
+    const first = field && /** @type {HTMLInputElement | null} */ (dlg.querySelector(`input[name="${field}"]`));
     if (first) first.focus();
   }
 
+  /**
+   * @param {HTMLFormElement} form
+   * @param {boolean} busy
+   * @param {string} [label] submit button text while busy
+   */
   function setBusy(form, busy, label) {
+    /** @type {HTMLButtonElement | null} */
     const btn = form.querySelector("button[type=submit]");
     if (!btn) return;
-    if (busy) { btn.dataset.label = btn.textContent; btn.textContent = label; }
+    // (An element's textContent is never null; `busy` always comes with a label.)
+    if (busy) { btn.dataset.label = btn.textContent ?? ""; btn.textContent = /** @type {string} */ (label); }
     else if (btn.dataset.label) btn.textContent = btn.dataset.label;
     btn.disabled = busy;
     form.setAttribute("aria-busy", String(busy));
   }
 
+  /** @param {MouseEvent} e a click inside the dialog */
   function onDialogClick(e) {
-    if (e.target === dialog && dialog.dataset.downOnBackdrop === "true") { closeDialog(); return; }
-    const mode = e.target.closest("button[data-mode]");
+    if (e.target === dialog && /** @type {HTMLDialogElement} */ (dialog).dataset.downOnBackdrop === "true") { closeDialog(); return; }
+    /** @type {HTMLElement | null} */
+    const mode = /** @type {Element} */ (e.target).closest("button[data-mode]");
     if (mode) { setAuthMode(mode.dataset.mode); return; }
-    const act = e.target.closest("[data-sync-act]");
+    /** @type {HTMLElement | null} */
+    const act = /** @type {Element} */ (e.target).closest("[data-sync-act]");
     if (!act) return;
     switch (act.dataset.syncAct) {
       case "close": closeDialog(); break;
@@ -617,13 +745,15 @@
     }
   }
 
+  /** @param {Event} e a form submitting inside the dialog */
   async function onDialogSubmit(e) {
     e.preventDefault();
-    const form = e.target;
-    if (form.dataset.form === "auth") await submitAuth(form);
-    else if (form.dataset.form === "delete") await submitDelete(form);
+    const form = /** @type {HTMLFormElement} */ (e.target);
+    if (form.dataset.form === "auth") await submitAuth(/** @type {AuthForm} */ (form));
+    else if (form.dataset.form === "delete") await submitDelete(/** @type {DeleteForm} */ (form));
   }
 
+  /** @param {AuthForm} form */
   async function submitAuth(form) {
     const signup = form.dataset.mode === "signup";
     const addr = form.email.value.trim();
@@ -648,6 +778,7 @@
     showError(res.json.error || "Something went wrong. Try again.", field);
   }
 
+  /** @param {DeleteForm} form */
   async function submitDelete(form) {
     const password = form.password.value;
     if (!password) return showError("Enter your password.", "password");
@@ -678,6 +809,7 @@
 
   function chooseServer() {
     if (!conflict) return;
+    /** @type {AppState} */
     const prev = JSON.parse(JSON.stringify(App.state()));
     takeServer(conflict);
     closeDialog();
@@ -702,7 +834,7 @@
     slot = document.getElementById("syncSlot");
     dialogRoot = document.getElementById("syncDialogRoot");
     noteEl = document.getElementById("saveNote");
-    noteText = noteEl ? noteEl.textContent : "";
+    noteText = noteEl ? noteEl.textContent ?? "" : ""; // (never null for an element)
     if (!slot || !dialogRoot || location.protocol === "file:") return;
 
     slot.addEventListener("click", onSlotClick);
@@ -717,6 +849,7 @@
     window.addEventListener("pagehide", flushPush);
     window.addEventListener("storage", (e) => {
       if (e.key !== META_KEY) return;
+      /** @type {SyncMeta} written by this module in another tab */
       const other = (() => { try { return JSON.parse(e.newValue || "null") || {}; } catch (_) { return {}; } })();
       if (email && !other.email) {
         // Signed out in another tab (keep its note to finish an offline logout).

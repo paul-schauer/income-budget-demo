@@ -23,7 +23,7 @@ async function main() {
       break;
     } catch (err) {
       if (attempt >= 6) throw err;
-      console.error(`[server] storage not ready (${err.message}); retrying in ${attempt * 2}s`);
+      console.error(`[server] storage not ready (${/** @type {Error} */ (err).message}); retrying in ${attempt * 2}s`);
       await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
     }
   }
@@ -33,14 +33,16 @@ async function main() {
   }
 
   const server = createServer({ config, store });
-  await new Promise((resolve, reject) => {
+  await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(config.port, config.host, resolve);
-  });
-  const { port } = server.address();
+  }));
+  // Listening on a TCP port, so address() is an AddressInfo (not a pipe name or null).
+  const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
   console.log(`[server] listening on http://localhost:${port} (store: ${store.kind}, sign-ups ${config.allowSignup ? "open" : "closed"})`);
 
   let stopping = false;
+  /** @param {string} signal */
   async function shutdown(signal) {
     if (stopping) return;
     stopping = true;
@@ -51,11 +53,12 @@ async function main() {
     }, 10000);
     force.unref();
     // Stop accepting connections, let in-flight requests finish, then drop stragglers.
+    /** @type {Promise<void>} */
     const closed = new Promise((resolve) => server.close(() => resolve()));
     server.closeIdleConnections();
     setTimeout(() => server.closeAllConnections(), 5000).unref();
     await closed;
-    try { await store.close(); } catch (err) { console.error("[server] store close failed:", err.message); }
+    try { await store.close(); } catch (err) { console.error("[server] store close failed:", /** @type {Error} */ (err).message); }
     process.exit(0);
   }
   process.on("SIGTERM", () => shutdown("SIGTERM"));

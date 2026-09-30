@@ -10,9 +10,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
 
+/** @typedef {import("../types/server").StaticFile} StaticFile */
+
 const ROOT_FILES = new Set(["index.html", "styles.css", "manifest.webmanifest", "sw.js"]);
 const DIRS = new Set(["js", "css", "icons"]);
 
+/** @type {Record<string, string>} */
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -34,7 +37,11 @@ const COMPRESSIBLE = new Set([".html", ".css", ".js", ".mjs", ".json", ".webmani
 const NO_CACHE = new Set(["index.html", "sw.js", "manifest.webmanifest"]);
 const MAX_AGE = 300; // seconds, for js/css/icons
 
-/** Map a URL pathname to a relative file path from the allowlist, or null. */
+/**
+ * Map a URL pathname to a relative file path from the allowlist, or null.
+ * @param {string} pathname
+ * @returns {string | null}
+ */
 function resolveStaticPath(pathname) {
   if (pathname === "/") return "index.html";
   if (typeof pathname !== "string" || !pathname.startsWith("/")) return null;
@@ -52,11 +59,18 @@ function resolveStaticPath(pathname) {
   return segments.join("/");
 }
 
+/** @param {string} root */
 function createStaticHandler(root) {
   const rootDir = path.resolve(root);
+  /** @type {string | null} */
   let realRoot = null;
+  /** @type {Map<string, StaticFile>} */
   const cache = new Map(); // rel -> { mtimeMs, size, body, gzip }
 
+  /**
+   * @param {string} rel
+   * @returns {Promise<StaticFile | null>}
+   */
   async function load(rel) {
     if (!realRoot) realRoot = await fs.promises.realpath(rootDir);
     const abs = path.join(rootDir, rel);
@@ -72,6 +86,7 @@ function createStaticHandler(root) {
     if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit;
     const body = await fs.promises.readFile(real);
     const ext = path.extname(rel).toLowerCase();
+    /** @type {StaticFile} */
     const entry = {
       mtimeMs: stat.mtimeMs,
       size: stat.size,
@@ -88,11 +103,14 @@ function createStaticHandler(root) {
 
   // A hash of every servable file, stamped into sw.js as its cache VERSION, so each
   // deploy that changes any asset makes browsers see a new service worker.
+  /** @type {{ signature: string | null, id: string | null }} */
   let build = { signature: null, id: null };
   async function buildId() {
+    /** @type {string[]} */
     const files = [];
     for (const f of ROOT_FILES) files.push(f);
     for (const dir of DIRS) {
+      /** @type {string[]} */
       let names = [];
       try { names = await fs.promises.readdir(path.join(rootDir, dir)); } catch (_) { continue; }
       for (const n of names) if (resolveStaticPath(`/${dir}/${n}`)) files.push(`${dir}/${n}`);
@@ -121,7 +139,13 @@ function createStaticHandler(root) {
     return file.stamped;
   }
 
-  /** Returns true when it handled the request. */
+  /**
+   * Returns true when it handled the request.
+   * @param {import("../types/server").Req} req
+   * @param {import("../types/server").Res} res
+   * @param {string} pathname
+   * @returns {Promise<boolean>}
+   */
   return async function serveStatic(req, res, pathname) {
     const rel = resolveStaticPath(pathname);
     if (!rel) return false;
@@ -133,6 +157,7 @@ function createStaticHandler(root) {
       return true;
     }
 
+    /** @type {import("node:http").OutgoingHttpHeaders} */
     const headers = {
       "Content-Type": file.type,
       "Cache-Control": NO_CACHE.has(rel) ? "no-cache" : `public, max-age=${MAX_AGE}`,
