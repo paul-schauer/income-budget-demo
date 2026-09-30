@@ -1,7 +1,7 @@
 {
-  "name": "Michigan Take-Home & Budget",
+  "name": "Take-Home & Budget",
   "short_name": "Take-Home",
-  "description": "Estimate Michigan take-home pay per paycheck and plan a budget around it.",
+  "description": "Estimate take-home pay in any US state and plan a budget around it.",
   "lang": "en-US",
   "dir": "ltr",
   "start_url": "./#paycheck",
