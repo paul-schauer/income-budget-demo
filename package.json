@@ -1,0 +1,18 @@
+{
+  "name": "incomebudget",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Michigan take-home pay calculator and paycheck budget planner",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}

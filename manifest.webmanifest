@@ -1,0 +1,44 @@
+{
+  "name": "Michigan Take-Home & Budget",
+  "short_name": "Take-Home",
+  "description": "Estimate Michigan take-home pay per paycheck and plan a budget around it.",
+  "lang": "en-US",
+  "dir": "ltr",
+  "start_url": "./#paycheck",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6f5",
+  "theme_color": "#1f6f54",
+  "categories": ["finance"],
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Budget",
+      "short_name": "Budget",
+      "description": "See where each paycheck goes",
+      "url": "./#budget",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Bill calendar",
+      "short_name": "Calendar",
+      "description": "Line up bills with paydays",
+      "url": "./#calendar",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Spending",
+      "short_name": "Spending",
+      "description": "Track what you actually spent",
+      "url": "./#spending",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

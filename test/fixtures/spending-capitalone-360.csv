@@ -1,0 +1,7 @@
+Account Number,Transaction Description,Transaction Date,Transaction Type,Transaction Amount,Balance
+3601,Debit Card Purchase - KROGER 123 ANN ARBOR MI,09/28/26,Debit,54.23,1845.77
+3601,Deposit from ACME CORP PAYROLL,09/26/26,Credit,2100.00,1900.00
+3601,Withdrawal to CONSUMERS ENERGY,09/25/26,Debit,88.17,-200.00
+3601,Debit Card Purchase - NETFLIX.COM,09/22/26,Debit,15.49,-111.83
+3601,Zelle money sent to JOHN SMITH,09/20/26,Debit,40.00,-96.34
+3601,Monthly Interest Paid,09/30/26,Credit,0.42,1846.19

@@ -1,0 +1,32 @@
+/* Bonus & overtime estimator (js/bonus.js), Paycheck tab. */
+#bonusRoot [hidden] { display: none !important; }
+
+.bonus-head { display: flex; justify-content: space-between; align-items: center; gap: 10px 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.bonus-head .card-title { margin: 0; }
+.bonus-head .seg { margin-bottom: 0; }
+
+.bonus-check { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
+#bonusRoot .bonus-check input { width: 18px; height: 18px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
+
+.bonus-rate { height: 42px; display: flex; align-items: center; gap: 2px; padding: 0 12px; border: 1px dashed var(--line); border-radius: 10px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.bonus-rate small { color: var(--muted); font-weight: 500; font-size: 12px; }
+
+.bonus-table { margin-top: 2px; }
+.bonus-table td:first-child { overflow-wrap: anywhere; }
+.bonus-table .rate { white-space: nowrap; }
+
+.bonus-yearend { background: var(--soft); border-radius: 12px; padding: 10px 14px; margin: 14px 0 8px; font-size: 13.5px; }
+.bonus-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; color: var(--muted); }
+.bonus-line b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bonus-line .rate { margin-left: 4px; }
+.bonus-note { margin: 6px 0 0; font-size: 13.5px; color: var(--muted); }
+.bonus-note:first-child { margin-top: 0; }
+.bonus-note b { font-variant-numeric: tabular-nums; }
+.bonus-note.good b { color: var(--good); }
+.bonus-note.bad b { color: var(--bad); }
+.bonus-note.good, .bonus-note.bad { color: var(--ink); }
+#bonusOut > .bonus-note { margin: 0; }
+
+@media (max-width: 560px) {
+  .bonus-table th, .bonus-table td { padding-left: 4px; padding-right: 4px; }
+}

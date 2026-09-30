@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Michigan Take-Home &amp; Budget</title>
+  <rect width="512" height="512" rx="112" fill="#1f6f54"/>
+  <g fill="none" stroke="#fff" stroke-width="54" stroke-linecap="round" stroke-linejoin="round" transform="translate(256 256) scale(.78) translate(-256 -256)">
+    <path d="M330 170C316 148 290 136 256 136C214 136 184 160 184 194C184 230 214 244 256 256C298 268 328 282 328 318C328 352 298 376 256 376C222 376 196 364 182 342"/>
+    <path d="M256 84V136M256 376V428"/>
+  </g>
+</svg>
