@@ -3,21 +3,26 @@
   "version": "1.0.0",
   "private": true,
   "description": "Michigan take-home pay calculator and paycheck budget planner",
-  "main": "server.js",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "NODE_ENV=development node server.js",
-    "test": "node --test test/*.test.js",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.app.json && tsc -p tsconfig.server.json && tsc -p tsconfig.sw.json"
+    "build": "node scripts/build.mjs",
+    "start": "node dist/server.js",
+    "dev": "node scripts/build.mjs --watch --serve",
+    "test": "npm run build && node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && tsc -p tsconfig.node.json"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "esbuild": "^0.25.12",
     "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
-  }
+  },
+  "type": "module"
 }

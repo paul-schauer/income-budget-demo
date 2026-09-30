@@ -4,3 +4,8 @@ data/
 .env.*
 !.env.example
 *.log
+# Build output (npm run build)
+dist/
+public/app.js
+public/app.js.map
+public/sw.js
