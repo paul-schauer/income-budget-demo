@@ -436,7 +436,7 @@
       // State and local details
       state: { code: st.code || "", name: st.name || "", kind: st.kind || "none", taxable: st.taxable || 0,
         marginalRate: st.marginalRate || 0, supplementalRate: st.supplementalRate || 0,
-        overtimeDeduction: !!st.overtimeDeduction, notes: st.notes || [] },
+        overtimeDeduction: !!st.overtimeDeduction, unverified: !!st.unverified, notes: st.notes || [] },
       local: { id: st.local.id || "none", name: st.local.name || "", rate: st.local.rate, tax: full.localTax },
       // People and other income
       people,

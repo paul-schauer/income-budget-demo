@@ -648,7 +648,8 @@
     ).join("");
 
     const notes = (r.state.notes || []).map(esc).join(" ");
-    $("#resultsFine").innerHTML = `Estimate only, not tax advice. Uses ${Tax.TAX_YEAR} federal${r.state.name ? ` and ${esc(r.state.name)}` : ""} rates with the standard deduction.${notes ? ` ${notes}` : ""}`;
+    const rough = r.state.unverified ? ` ${esc(r.state.name)}'s figures haven't been checked against official 2026 sources yet.` : "";
+    $("#resultsFine").innerHTML = `Estimate only, not tax advice. Uses ${Tax.TAX_YEAR} federal${r.state.name ? ` and ${esc(r.state.name)}` : ""} rates with the standard deduction.${notes ? ` ${notes}` : ""}${rough}`;
 
     const hint = $("#k401Hint");
     if (you.k401 > 0) {
@@ -672,7 +673,8 @@
     const what = d.kind === "none" ? `${d.name} has no income tax on wages.`
       : d.kind === "flat" ? `${d.name} has a flat ${+(d.rate * 100).toFixed(3)}% income tax.`
       : `${d.name} has graduated income tax rates.`;
-    el.textContent = what + (payroll.length ? ` Also deducted from pay: ${payroll.join(", ")}.` : "");
+    el.textContent = what + (payroll.length ? ` Also deducted from pay: ${payroll.join(", ")}.` : "") +
+      (d.unverified ? ` ${d.name}'s 2026 figures haven't been checked against official sources yet, so treat them as rough.` : "");
   }
 
   // ---------- Other income ----------

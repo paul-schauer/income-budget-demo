@@ -34,6 +34,7 @@
    *   locals: [{ id, name, type, ... }],         // local income taxes, see computeLocal()
    *   compute(ctx, generic) { return { taxable, tax } },   // optional override for rules the fields can't express
    *   notes: ["..."],                            // short user-facing notes
+   *   unverified: true,                          // figures not yet checked against 2026 sources
    *   sources: ["https://..."],                  // where each figure came from
    * }
    */
@@ -183,9 +184,11 @@
     const payroll = (ctx.earners || []).map((e) => payrollFor(d, num(e.wages)));
     const payrollTotal = payroll.flat().reduce((s, p) => s + p.amount, 0);
 
-    // Marginal rate from a $100 bump in AGI (and federal taxable income).
-    const bumped = incomeTax(d, { ...ctx, agi: num(ctx.agi) + 100, federalTaxable: num(ctx.federalTaxable) + 100 });
-    const marginalRate = Math.max(0, (bumped.tax - it.tax) / 100);
+    // Marginal rate over a $1,000 raise in AGI (and federal taxable income). Phase-outs can make
+    // a small step land on a cliff, so the result is capped at 20%.
+    const step = 1000;
+    const bumped = incomeTax(d, { ...ctx, agi: num(ctx.agi) + step, federalTaxable: num(ctx.federalTaxable) + step });
+    const marginalRate = Math.min(0.2, Math.max(0, (bumped.tax - it.tax) / step));
 
     return {
       code: d.code,
@@ -199,6 +202,7 @@
       marginalRate,
       supplementalRate: Number.isFinite(d.supplementalRate) ? d.supplementalRate : marginalRate,
       overtimeDeduction: !!d.overtimeDeduction,
+      unverified: !!d.unverified,
       notes: d.notes || [],
     };
   }
@@ -235,7 +239,7 @@
       const v = d[key];
       if (v && !(Number.isFinite(v.filer ?? 0) && Number.isFinite(v.dependent ?? 0))) errors.push(`${key} invalid`);
     }
-    for (const key of ["taxes401k", "overtimeDeduction"]) if (d[key] != null && typeof d[key] !== "boolean") errors.push(`${key} must be boolean`);
+    for (const key of ["taxes401k", "overtimeDeduction", "unverified"]) if (d[key] != null && typeof d[key] !== "boolean") errors.push(`${key} must be boolean`);
     if (d.supplementalRate != null && !(d.supplementalRate >= 0 && d.supplementalRate < 0.2)) errors.push("supplementalRate out of range");
     for (const [i, p] of (d.payroll || []).entries()) {
       if (!p.id || !p.name || !(p.rate > 0 && p.rate < 0.05)) errors.push(`payroll[${i}] invalid`);
