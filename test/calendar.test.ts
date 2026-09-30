@@ -1,15 +1,18 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const C = require("../js/calendar.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as C from "../src/app/calendar";
+import type { BudgetItem, BudgetLine } from "../src/app/types";
+import type { CalendarPlan, PlanInput } from "../src/app/calendar-goals.types";
+import type { PayPeriod } from "../src/tax/types";
 
-const near = (actual, expected, tol = 0.005) =>
+const near = (actual: number, expected: number, tol = 0.005) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
-const bill = (name, amount, dueDay, extra = {}) =>
+const bill = (name: string, amount: number, dueDay: number, extra: Partial<BudgetItem> = {}): BudgetItem =>
   ({ id: name, name, amount, recurrence: "monthly", category: "other", dueDay, ...extra });
 
 // Map of paycheck date -> "name@due" strings, for compact assertions.
-const layout = (p) => Object.fromEntries(p.paychecks.map((pc) => [pc.date, pc.bills.map((b) => `${b.name}@${b.due}`)]));
+const layout = (p: CalendarPlan) => Object.fromEntries(p.paychecks.map((pc) => [pc.date, pc.bills.map((b) => `${b.name}@${b.due}`)]));
 
 test("weekly: each bill goes to the latest payday on or before its due date", () => {
   // Paid Fridays; today is Wednesday 2026-09-30.
@@ -141,8 +144,8 @@ test("undated and non-monthly items plus extras are spread across every paycheck
     { name: "Insurance", amount: 600, recurrence: "quarterly", category: "transport", dueDay: 10 },
     { name: "Club", amount: 520, recurrence: "annual", category: "personal", dueDay: 3 },
     { name: "Free", amount: 0, recurrence: "monthly", category: "other", dueDay: 5 },
-  ];
-  const extras = [{ name: "Vacation goal", annual: 2600, category: "savings", source: "goals" }, { name: "Nothing", annual: 0 }];
+  ] as BudgetItem[];
+  const extras: BudgetLine[] = [{ name: "Vacation goal", annual: 2600, category: "savings", source: "goals" }, { name: "Nothing", annual: 0 }];
   const p = C.plan({ items, extras, income: { payPeriod: "biweekly", nextPayday: "2026-10-09" }, netPerPaycheck: 1800, today: "2026-09-30", count: 4 });
 
   const per = Object.fromEntries(p.spread.map((s) => [s.name, s.perPaycheck]));
@@ -163,7 +166,7 @@ test("undated and non-monthly items plus extras are spread across every paycheck
 
 test("left over = take-home - dated bills - spread", () => {
   const p = C.plan({
-    items: [bill("Car", 340, 15), { name: "Gas", amount: 45, recurrence: "weekly", category: "transport" }],
+    items: [bill("Car", 340, 15), { name: "Gas", amount: 45, recurrence: "weekly", category: "transport" } as BudgetItem],
     extras: [{ name: "Goal", annual: 5200, category: "savings" }],
     income: { payPeriod: "weekly", nextPayday: "2026-10-02" },
     netPerPaycheck: 800, today: "2026-09-30", count: 3,
@@ -185,7 +188,7 @@ test("negative left over is flagged as over", () => {
     income: { payPeriod: "weekly", nextPayday: "2026-10-02" },
     netPerPaycheck: 900, today: "2026-09-30", count: 6,
   });
-  const rent = p.paychecks.find((pc) => pc.bills.length);
+  const rent = p.paychecks.find((pc) => pc.bills.length)!;
   assert.equal(rent.date, "2026-10-30");
   near(rent.left, -350);
   assert.equal(rent.over, true);
@@ -194,7 +197,7 @@ test("negative left over is flagged as over", () => {
 });
 
 test("tight flags the lowest quartile, and nothing when paychecks are even", () => {
-  const mk = (lefts) => lefts.map((left) => ({ left }));
+  const mk = (lefts: number[]): { left: number; tight?: boolean }[] => lefts.map((left) => ({ left }));
   const eight = C.flagTight(mk([500, 100, 450, 480, 520, 90, 470, 510]), 1000);
   assert.deepEqual(eight.map((p) => p.tight), [false, true, false, false, false, true, false, false]);
 
@@ -221,7 +224,7 @@ test("no payday set: weekly/biweekly default to Fridays and pin the anchor", () 
 });
 
 test("default horizon covers about three months", () => {
-  const n = (payPeriod) => C.plan({ income: { payPeriod }, netPerPaycheck: 1, today: "2026-09-30" }).paychecks.length;
+  const n = (payPeriod: PayPeriod) => C.plan({ income: { payPeriod }, netPerPaycheck: 1, today: "2026-09-30" }).paychecks.length;
   assert.equal(n("weekly"), 13);
   assert.equal(n("biweekly"), 7);
   assert.equal(n("semimonthly"), 6);
@@ -236,7 +239,7 @@ test("month grid: paydays, bills on due days, clamped month end", () => {
   assert.equal(m.days.length, 28);
   assert.equal(m.lead, 1); // Feb 1, 2027 is a Monday
   assert.deepEqual(m.days.filter((d) => d.payday).map((d) => d.day), [5, 12, 19, 26]);
-  const names = (day) => m.days[day - 1].bills.map((b) => b.name);
+  const names = (day: number) => m.days[day - 1].bills.map((b) => b.name);
   assert.deepEqual(names(1), ["Rent"]);
   assert.deepEqual(names(15), ["Car"]);
   assert.deepEqual(names(28), ["Card"]);
@@ -249,7 +252,7 @@ test("payingPayday finds the paycheck that covers a date", () => {
 });
 
 test("suggests moving a bill out of a much tighter paycheck", () => {
-  const input = {
+  const input: PlanInput = {
     items: [
       bill("Rent", 1000, 1, { category: "housing" }),
       bill("Car payment", 400, 3, { category: "transport" }),
@@ -270,7 +273,7 @@ test("suggests moving a bill out of a much tighter paycheck", () => {
 });
 
 test("no suggestion when paychecks are already even", () => {
-  const input = {
+  const input: PlanInput = {
     items: [bill("A", 300, 5), bill("B", 300, 20)],
     income: { payPeriod: "semimonthly", nextPayday: "" },
     netPerPaycheck: 1500, today: "2026-10-01",
@@ -279,7 +282,7 @@ test("no suggestion when paychecks are already even", () => {
 });
 
 test("weekly pay: suggests moving a bill so it never shares rent's paycheck", () => {
-  const input = {
+  const input: PlanInput = {
     items: [
       bill("Rent", 1250, 1, { category: "housing" }),
       bill("Student loan", 210, 5, { category: "debt" }),
@@ -301,7 +304,7 @@ test("weekly pay: suggests moving a bill so it never shares rent's paycheck", ()
 });
 
 test("no suggestion when only housing makes a paycheck tight", () => {
-  const input = {
+  const input: PlanInput = {
     items: [bill("Rent", 1250, 1, { category: "housing" })],
     income: { payPeriod: "weekly", nextPayday: "2026-10-02" },
     netPerPaycheck: 850, today: "2026-09-30",

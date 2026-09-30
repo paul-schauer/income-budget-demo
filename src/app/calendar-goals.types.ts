@@ -1,13 +1,13 @@
 /**
- * Types for the Calendar (js/calendar.js) and Goals (js/goals.js) modules.
+ * Types for the Calendar (calendar.ts) and Goals (goals.ts) modules.
  * Type-only: nothing here exists at runtime. Dates are ISO strings ("YYYY-MM-DD").
  */
-import type { BudgetItem, BudgetLine, CategoryId, Income, Tab } from "./app";
-import type { PayPeriod, Period } from "./tax";
+import type { BudgetItem, BudgetLine, CategoryId, Income, Tab } from "./types";
+import type { PayPeriod, Period } from "../tax/types";
 
 // ---------------------------------------------------------------- calendar
 
-/** Input to PayCalendar.plan(). Everything is optional and checked at runtime. */
+/** Input to plan() in calendar.ts. Everything is optional and checked at runtime. */
 export interface PlanInput {
   items?: BudgetItem[] | null;
   /** read-only budget lines from other modules (e.g. savings goals) */
@@ -82,7 +82,7 @@ export interface Paycheck {
   tight: boolean;
 }
 
-/** Result of PayCalendar.plan(). */
+/** Result of plan() in calendar.ts. */
 export interface CalendarPlan {
   today: string;
   payPeriod: PayPeriod;
@@ -107,7 +107,7 @@ export interface CalendarPlan {
   daysUntilNext: number;
 }
 
-/** Result of PayCalendar.suggestMove(): move one bill's due day to even out paychecks. */
+/** Result of suggestMove() in calendar.ts: move one bill's due day to even out paychecks. */
 export interface MoveSuggestion {
   index: number;
   id: string;
@@ -140,7 +140,7 @@ export interface MonthDay {
   bills: BillOccurrence[];
 }
 
-/** Result of PayCalendar.month(). */
+/** Result of month() in calendar.ts. */
 export interface MonthGrid {
   year: number;
   month: number;
@@ -149,22 +149,11 @@ export interface MonthGrid {
   days: MonthDay[];
 }
 
-export interface CalendarApi {
-  HORIZON: Record<PayPeriod, number>;
-  plan(o?: PlanInput): CalendarPlan;
-  occurrences(items: BudgetItem[] | null | undefined, fromIso: string, toIso: string): BillOccurrence[];
-  flagTight<T extends { left: number; tight?: boolean }>(paychecks: T[], net?: number): T[];
-  suggestMove(o?: PlanInput, base?: CalendarPlan): MoveSuggestion | null;
-  payingPayday(anchor: string | null | undefined, payPeriod: string, iso: string): string | null;
-  month(input: MonthInput): MonthGrid;
-  isDated(item: BudgetItem | null | undefined): boolean;
-}
-
 // ---------------------------------------------------------------- goals
 
 export type GoalMode = "date" | "amount";
 
-/** A savings goal, as stored in state.goals (after Goals.sanitize()). */
+/** A savings goal, as stored in state.goals (after sanitize() in goals.ts). */
 export interface Goal {
   id: string;
   name: string;
@@ -234,10 +223,10 @@ export interface IdleGoalPlan extends GoalPlanBase {
   finishDate: null;
 }
 
-/** Result of Goals.plan(). */
+/** Result of plan() in goals.ts. */
 export type GoalPlan = ActiveGoalPlan | IdleGoalPlan;
 
-/** The object Goals' planWith() fills in before returning it as a GoalPlan. */
+/** The object planWith() in goals.ts fills in before returning it as a GoalPlan. */
 export interface GoalPlanFields extends GoalPlanBase {
   status: GoalStatus;
   perPaycheck: number | null;
@@ -246,7 +235,7 @@ export interface GoalPlanFields extends GoalPlanBase {
   finishDate: string | null;
 }
 
-/** Result of Goals.summarize(). */
+/** Result of summarize() in goals.ts. */
 export interface GoalSummary {
   saved: number;
   target: number;
@@ -283,22 +272,6 @@ export interface GoalBudgetLine extends BudgetLine {
   note: string;
 }
 
-export interface GoalsApi {
-  MODES: GoalMode[];
-  MAX_GOALS: number;
-  MAX_AMOUNT: number;
-  MAX_YEARS: number;
-  isISODate(s: unknown): s is string;
-  addMonths(iso: string, n: number): string;
-  sanitize(raw: unknown): Goal[];
-  plan(goal: Partial<Goal> | null | undefined, sched?: GoalScheduleInput | null): GoalPlan;
-  summarize(goals: Goal[] | null | undefined, sched?: GoalScheduleInput | null): GoalSummary;
-  budgetLines(goals: Goal[] | null | undefined, sched?: GoalScheduleInput | null): GoalBudgetLine[];
-  templates(opts?: GoalTemplateOptions): GoalTemplate[];
-  emergencyFundTarget(itemsAnnual: number): number;
-  holidayDate(today: string): string;
-}
-
 /** The Goals form's elements (built once by the tab's skeleton). */
 export interface GoalFormEls {
   card: HTMLElement;
@@ -312,13 +285,4 @@ export interface GoalFormEls {
   per: HTMLInputElement;
   include: HTMLButtonElement;
   preview: HTMLElement;
-}
-
-declare global {
-  interface Window {
-    PayCalendar: CalendarApi;
-    Goals: GoalsApi;
-  }
-  var PayCalendar: CalendarApi;
-  var Goals: GoalsApi;
 }

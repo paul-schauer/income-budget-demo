@@ -1,17 +1,18 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const G = require("../js/goals.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as G from "../src/app/goals";
+import type { Goal } from "../src/app/calendar-goals.types";
 
 // Fixed clock: Wednesday 2026-09-30. 2026-10-02 is a Friday payday.
 const TODAY = "2026-09-30";
 const biweekly = { anchor: "2026-10-02", payPeriod: "biweekly", today: TODAY, perYear: 26 };
 const weekly = { anchor: "2026-10-02", payPeriod: "weekly", today: TODAY, perYear: 52 };
 
-const goal = (over) => ({
+const goal = (over: Partial<Goal>): Goal => ({
   id: "g", name: "Goal", target: 1000, saved: 0, mode: "date", targetDate: "", perPaycheck: 0,
   includeInBudget: true, createdAt: 0, ...over,
 });
-const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
+const close = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
 
 // ---------- Date mode ----------
 
@@ -185,7 +186,7 @@ test("emergency-fund template is 3 months of budgeted expenses, rounded up to $1
   assert.equal(G.emergencyFundTarget(24000), 6000);
   assert.equal(G.emergencyFundTarget(0), 1000); // no budget yet: starter fund
   assert.equal(G.emergencyFundTarget(NaN), 1000);
-  const ef = G.templates({ itemsAnnual: 37036, today: TODAY }).find((t) => t.key === "emergency");
+  const ef = G.templates({ itemsAnnual: 37036, today: TODAY }).find((t) => t.key === "emergency")!;
   assert.equal(ef.target, 9300);
   assert.equal(ef.targetDate, "2027-09-30");
 });
@@ -197,7 +198,7 @@ test("templates: vacation, car and holiday gifts by Dec 15", () => {
     assert.ok(x.target > 0);
     assert.ok(G.isISODate(x.targetDate) && x.targetDate > TODAY);
   }
-  assert.equal(t.find((x) => x.key === "holiday").targetDate, "2026-12-15");
+  assert.equal(t.find((x) => x.key === "holiday")!.targetDate, "2026-12-15");
   assert.equal(G.holidayDate("2026-12-01"), "2027-12-15"); // too close: next year
 });
 
