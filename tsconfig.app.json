@@ -1,0 +1,11 @@
+{
+  // Browser UI: the app core and feature modules. Their pure logic also runs under Node
+  // for tests, hence the Node globals.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["types/*.d.ts", "js/*.js"],
+  "exclude": ["js/tax.js", "js/state-tax.js", "js/schedule.js"]
+}

@@ -1,0 +1,10 @@
+{
+  // Tax engines and state data: plain JS checked by TypeScript (npm run typecheck).
+  // They run in the browser and in Node, so both sets of globals are available.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["types/tax.d.ts", "types/app.d.ts", "types/globals.d.ts", "js/tax.js", "js/state-tax.js", "js/schedule.js", "js/states/*.js"]
+}
