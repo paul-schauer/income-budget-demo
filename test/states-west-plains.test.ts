@@ -216,10 +216,9 @@ test("New Mexico: single, federal standard deduction", () => {
 
 test("New Mexico: married filing jointly, two children", () => {
   const r = S.compute("NM", family());
-  const taxable = 135250 - 32200; // 103,050; the $4,000 dependent deduction isn't modeled
+  const taxable = 135250 - 32200 - 4000 * (2 - 1); // 99,050: $4,000 for each dependent after the first
   near(r.taxable, taxable);
-  near(r.tax, 8000 * 0.015 + (25000 - 8000) * 0.032 + (50000 - 25000) * 0.043 + (100000 - 50000) * 0.047
-    + (taxable - 100000) * 0.049);
+  near(r.tax, 8000 * 0.015 + (25000 - 8000) * 0.032 + (50000 - 25000) * 0.043 + (taxable - 50000) * 0.047);
 });
 
 test("New Mexico: schedules reproduce the base tax printed in HB 252", () => {
@@ -236,14 +235,24 @@ test("New Mexico: low- and middle-income exemption, $2,500 per exemption phased 
   const sTaxable = 30000 - 16100 - (2500 - 0.15 * (30000 - 20000));
   near(s.taxable, sTaxable);
   near(s.tax, 5500 * 0.015 + (sTaxable - 5500) * 0.032);
-  // Joint with two children, AGI $40,000: $2,500 less 10% of the $10,000 over $30,000, for four exemptions.
-  const j = S.compute("NM", family({ agi: 40000 }));
-  const jTaxable = 40000 - 32200 - 4 * (2500 - 0.1 * (40000 - 30000));
+  // Joint with two children, AGI $50,000: $2,500 less 10% of the $20,000 over $30,000, for four exemptions,
+  // plus the $4,000 dependent deduction for the second child.
+  const j = S.compute("NM", family({ agi: 50000 }));
+  const jTaxable = 50000 - 32200 - 4 * (2500 - 0.1 * (50000 - 30000)) - 4000;
   near(j.taxable, jTaxable);
-  near(j.tax, jTaxable * 0.015);
+  near(j.tax, 8000 * 0.015 + (jTaxable - 8000) * 0.032);
   // Gone at $36,667 single and $55,000 joint, so the test households get none of it.
   near(S.compute("NM", earner(36667)).taxable, 36667 - 16100);
-  near(S.compute("NM", family({ agi: 55000 })).taxable, 55000 - 32200);
+  near(S.compute("NM", family({ agi: 55000 })).taxable, 55000 - 32200 - 4000);
+});
+
+test("New Mexico: dependent deduction only for heads of household and joint filers, after the first dependent", () => {
+  // Single with two dependents: no deduction.
+  near(S.compute("NM", single({ dependents: 2 })).taxable, 52250 - 16100);
+  // Head of household with three dependents: 2 x $4,000, plus $2,500 less 10% of the $22,250 over $30,000
+  // for each of four exemptions.
+  const hoh = S.compute("NM", single({ status: "hoh", dependents: 3, federalStandardDeduction: 24150 }));
+  near(hoh.taxable, 52250 - 24150 - 4 * (2500 - 0.1 * (52250 - 30000)) - 2 * 4000);
 });
 
 // ---------- Montana ----------

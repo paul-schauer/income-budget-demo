@@ -74,6 +74,8 @@ const NM_BRACKETS: Record<FilingStatus, Brackets> = {
 // NMSA 7-2-5.8 low- and middle-income exemption: $2,500 for each exemption, less this share of AGI over the
 // threshold, so it's gone at $36,667 single, $55,000 joint/HOH and $27,500 MFS.
 const NM_LMIE: Record<FilingStatus, [number, number]> = { single: [20000, 0.15], mfj: [30000, 0.1], mfs: [15000, 0.2], hoh: [30000, 0.1] };
+// NMSA 7-2-39 (2019 HB 6): heads of household and joint filers deduct $4,000 for each dependent after the first.
+const NM_DEPENDENT_DEDUCTION = 4000;
 
 // ---------- Minnesota ----------
 // 2026 amounts from MN Revenue's December 2025 release and "Tax Year 2026 Inflation-Adjusted Amounts".
@@ -226,7 +228,7 @@ export const STATES: StateTable = {
   },
 
   NM: {
-    unverified: true, // dependent deduction, bonus rate and exemption formula not confirmed officially (see docs)
+    unverified: true, // bonus rate, HB 264's fate and the 2026 text of 7-2-5.8 / 7-2-39 not confirmed officially (see docs)
     code: "NM",
     name: "New Mexico",
     year: 2026,
@@ -238,15 +240,17 @@ export const STATES: StateTable = {
     overtimeDeduction: false, // 2026 HB 264 would have added one; it wasn't enacted
     payroll: [], // the Workers' Compensation fee is $2 a quarter, not a rate; no paid-leave program
     locals: [],
-    // The low- and middle-income exemption, for each filer and dependent.
+    // The low- and middle-income exemption (for each filer and dependent) and the dependent deduction.
     compute(ctx, generic) {
       const [start, share] = NM_LMIE[ctx.status];
-      const each = Math.max(0, 2500 - share * Math.max(0, num(ctx.agi) - start));
-      if (each <= 0) return generic;
-      const taxable = Math.max(0, generic.taxable - each * (ctx.filers + ctx.dependents));
+      const lmie = Math.max(0, 2500 - share * Math.max(0, num(ctx.agi) - start)) * (ctx.filers + ctx.dependents);
+      const joint = ctx.status === "mfj" || ctx.status === "hoh";
+      const dependents = joint ? NM_DEPENDENT_DEDUCTION * Math.max(0, ctx.dependents - 1) : 0;
+      if (lmie + dependents <= 0) return generic;
+      const taxable = Math.max(0, generic.taxable - lmie - dependents);
       return { taxable, tax: bracketTax(taxable, NM_BRACKETS[ctx.status]) };
     },
-    notes: ["New Mexico's $4,000 dependent deduction isn't included."],
+    notes: [],
     sources: [
       "https://www.nmlegis.gov/Sessions/24%20Regular/bills/house/HB0252.HTML",
       "https://www.tax.newmexico.gov/all-nm-taxes/current-historic-tax-rates-overview/personal-income-tax-rates/",
