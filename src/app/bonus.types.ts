@@ -1,9 +1,8 @@
 /**
- * Types for js/bonus.js: the bonus and overtime estimates (window.Bonus in the browser,
- * module.exports in Node) and the card's saved inputs. Type-only: nothing here exists at runtime.
+ * Types for bonus.ts: the bonus and overtime estimates and the card's saved inputs.
+ * Type-only: nothing here exists at runtime.
  */
-import type { TaxInput } from "./tax";
-import type { Income } from "./app";
+import type { TaxInput } from "../tax/types";
 
 export interface BonusInput {
   /** Tax.calculate input for regular pay (annual) */
@@ -99,14 +98,6 @@ export interface HourlyRate {
   rate: number;
   /** true when converted from a salary at 2,080 hours a year */
   estimated: boolean;
-}
-
-/** window.Bonus in the browser; module.exports of js/bonus.js in Node. */
-export interface BonusApi {
-  bonusEstimate(o: BonusInput): BonusResult;
-  overtimeEstimate(o: OvertimeInput): OvertimeResult;
-  hourlyRateFor(income: Partial<Income> | null | undefined): HourlyRate;
-  ytdEstimate(annualWages: number, date?: Date): number;
 }
 
 /** The card's inputs, kept in localStorage (this browser only). Amounts stay as typed. */

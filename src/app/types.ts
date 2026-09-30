@@ -1,8 +1,8 @@
 /**
- * Types for the app core (js/app.js) and the module API every feature module uses.
+ * Types for the app core (core.ts) and the module API every feature module uses.
  * Type-only: nothing here exists at runtime.
  */
-import type { FilingStatus, IncomeType, PayPeriod, Period, PeriodInfo, TaxInput, TaxResult } from "./tax";
+import type { FilingStatus, IncomeType, PayPeriod, Period, PeriodInfo, TaxInput, TaxResult } from "../tax/types";
 
 export type Tab = "paycheck" | "budget" | "calendar" | "goals" | "spending";
 export type CategoryId =

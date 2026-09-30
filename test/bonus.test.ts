@@ -1,11 +1,12 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const B = require("../js/bonus.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as B from "../src/app/bonus";
+import type { TaxInput } from "../src/tax/types";
 
-const near = (actual, expected, tol = 0.01) =>
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
-const single60k = {
+const single60k: TaxInput = {
   grossAnnual: 60000,
   filingStatus: "single",
   k401Percent: 0,
@@ -143,6 +144,7 @@ test("overtime deduction: $12,500 cap and $100-per-$1,000 phase-out", () => {
 test("overtime: salaried pay converts at 2,080 hours", () => {
   assert.deepEqual(B.hourlyRateFor({ mode: "salary", salary: 62400 }), { rate: 30, estimated: true });
   assert.deepEqual(B.hourlyRateFor({ mode: "hourly", hourlyRate: 28, salary: 99999 }), { rate: 28, estimated: false });
+  // @ts-expect-error: a blank field can arrive as "" instead of a number
   assert.deepEqual(B.hourlyRateFor({ mode: "salary", salary: "" }), { rate: 0, estimated: true });
 });
 
