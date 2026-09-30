@@ -7,13 +7,38 @@
 (function () {
   "use strict";
 
+  // Type aliases live inside the IIFE: top-level typedefs in a script file would be global.
+  /** @typedef {import("../types/tax").Period} Period */
+  /** @typedef {import("../types/tax").IncomeType} IncomeType */
+  /** @typedef {import("../types/tax").TaxInput} TaxInput */
+  /** @typedef {import("../types/tax").TaxResult} TaxResult */
+  /** @typedef {import("../types/tax").StateLocal} StateLocal */
+  /** @typedef {import("../types/app").Tab} Tab */
+  /** @typedef {import("../types/app").Category} Category */
+  /** @typedef {import("../types/app").CategoryId} CategoryId */
+  /** @typedef {import("../types/app").Income} Income */
+  /** @typedef {import("../types/app").Spouse} Spouse */
+  /** @typedef {import("../types/app").BudgetItem} BudgetItem */
+  /** @typedef {import("../types/app").ExtraIncome} ExtraIncome */
+  /** @typedef {import("../types/app").AppState} AppState */
+  /** @typedef {import("../types/app").BudgetLine} BudgetLine */
+  /** @typedef {import("../types/app").BaseContext} BaseContext */
+  /** @typedef {import("../types/app").AppContext} AppContext */
+  /** @typedef {import("../types/app").AppModule} AppModule */
+  /** @typedef {import("../types/app").AppEvent} AppEvent */
+  /** @typedef {{ save: AppState, render: AppContext }} EventArg  what each event's listeners receive */
+
   const { PERIODS, PAY_PERIODS, CITIES, FILING_STATUSES } = Tax;
   const STORAGE_KEY = "incomebudget:v1";
   const TAB_KEY = "incomebudget:tab";
+  /** @type {Period[]} */
   const RECURRENCES = ["weekly", "biweekly", "semimonthly", "monthly", "quarterly", "annual"];
+  /** @type {Period[]} */
   const VIEW_PERIODS = ["weekly", "biweekly", "semimonthly", "monthly", "annual"];
+  /** @type {Tab[]} */
   const TABS = ["paycheck", "budget", "calendar", "goals", "spending"];
 
+  /** @type {Category[]} */
   const CATEGORIES = [
     { id: "housing", name: "Housing", color: "#3b7dd8" },
     { id: "transport", name: "Transportation", color: "#d99a2b" },
@@ -29,6 +54,7 @@
   const uid = () => Math.random().toString(36).slice(2, 10);
 
   // A brand-new visitor starts blank. Real data lives in the browser (and the server when signed in).
+  /** @type {Income} */
   const DEFAULT_INCOME = {
     mode: "salary",
     salary: 0,
@@ -50,6 +76,7 @@
   };
 
   // A spouse's pay only counts on a joint return.
+  /** @type {Spouse} */
   const DEFAULT_SPOUSE = {
     mode: "salary",
     salary: 0,
@@ -62,6 +89,7 @@
   };
 
   // Kinds of other income, and how each is taxed (see Tax.calculate).
+  /** @type {{ id: IncomeType, name: string, hint: string }[]} */
   const INCOME_KINDS = [
     { id: "self", name: "Self-employment / 1099", hint: "Freelance, gig or business profit. Adds self-employment tax, and no tax is withheld." },
     { id: "w2", name: "Second job (W-2)", hint: "Wages from another employer, who withholds tax from it." },
@@ -70,6 +98,7 @@
   ];
 
   // One-tap starters on the Budget tab: they fill the add form, never add amounts on their own.
+  /** @type {{ name: string, category: CategoryId, recurrence: Period }[]} */
   const BILL_IDEAS = [
     { name: "Rent", category: "housing", recurrence: "monthly" },
     { name: "Mortgage", category: "housing", recurrence: "monthly" },
@@ -105,18 +134,29 @@
   // App.on(event, fn)     events: "save" (state), "render" (ctx)
   // App.util              helpers: money, pct, esc, parseNum, uid, options, category, ...
 
+  /** @type {AppModule[]} */
   const modules = [];
+  /** @type {{ [E in AppEvent]: ((arg: EventArg[E]) => void)[] }} */
   const listeners = { save: [], render: [] };
-  let state = null;
+  // null until init() loads it; nothing reads it before then (render() waits for `ready`).
+  /** @type {AppState} */
+  let state = /** @type {AppState} */ (/** @type {unknown} */ (null));
   let ready = false;
 
+  /**
+   * @template {AppEvent} E
+   * @param {E} event
+   * @param {EventArg[E]} arg
+   */
   function emit(event, arg) {
     for (const fn of listeners[event]) {
       try { fn(arg); } catch (err) { console.error(`[${event} listener]`, err); }
     }
   }
 
+  /** @returns {AppState} */
   function defaultState() {
+    /** @type {AppState} */
     const s = {
       updatedAt: 0,
       income: { ...DEFAULT_INCOME },
@@ -132,6 +172,7 @@
 
   // ---------- State & persistence ----------
 
+  /** @returns {AppState} */
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -140,21 +181,33 @@
     return defaultState();
   }
 
+  /**
+   * A day of the month, 1-31, or null.
+   * @param {unknown} v
+   * @returns {number | null}
+   */
   function clampDay(v) {
     const n = Math.floor(Number(v));
     return Number.isFinite(n) && n >= 1 && n <= 31 ? n : null;
   }
 
-  function sanitize(data) {
+  /**
+   * Check a whole saved document (storage, import, server sync) and fill in anything missing.
+   * @param {unknown} input  unvalidated JSON
+   * @returns {AppState}
+   */
+  function sanitize(input) {
     const s = defaultState();
-    if (data && typeof data === "object") {
+    const data = input && typeof input === "object" ? /** @type {Record<string, unknown>} */ (input) : null;
+    if (data) {
       Object.assign(s.income, pick(data.income, Object.keys(s.income)));
       // Data saved before states existed was Michigan-only, with a Michigan city.
       if (data.income && typeof data.income === "object") {
-        if (!("state" in data.income)) s.income.state = "MI";
-        if ("cityId" in data.income && !("localId" in data.income)) {
-          s.income.localId = data.income.cityId || "none";
-          s.income.localResident = data.income.cityResident !== false;
+        const inc = /** @type {Record<string, unknown>} */ (data.income);
+        if (!("state" in inc)) s.income.state = "MI";
+        if ("cityId" in inc && !("localId" in inc)) {
+          s.income.localId = /** @type {string} */ (inc.cityId || "none"); // a non-string is reset below
+          s.income.localResident = inc.cityResident !== false;
         }
       }
       Object.assign(s.spouse, pick(data.spouse, Object.keys(s.spouse)));
@@ -172,8 +225,12 @@
           }));
       }
       if (Number.isFinite(Number(data.updatedAt))) s.updatedAt = Number(data.updatedAt);
-      if (VIEW_PERIODS.includes(data.view)) s.view = data.view;
-      if (data.sort && typeof data.sort === "object") s.sort = { key: data.sort.key || null, dir: data.sort.dir === "desc" ? "desc" : "asc" };
+      if (isOneOf(VIEW_PERIODS, data.view)) s.view = data.view;
+      if (data.sort && typeof data.sort === "object") {
+        const sort = /** @type {Record<string, unknown>} */ (data.sort);
+        // sortedItems() ignores a key it doesn't know.
+        s.sort = { key: /** @type {string | null} */ (sort.key || null), dir: sort.dir === "desc" ? "desc" : "asc" };
+      }
       if (Array.isArray(data.items)) {
         s.items = data.items
           .filter((i) => i && typeof i.name === "string")
@@ -203,13 +260,21 @@
     return s;
   }
 
+  /**
+   * The listed keys obj has, copied to a new object.
+   * @param {unknown} obj
+   * @param {string[]} keys
+   * @returns {Record<string, unknown>}
+   */
   function pick(obj, keys) {
+    /** @type {Record<string, unknown>} */
     const out = {};
-    if (obj && typeof obj === "object") for (const k of keys) if (k in obj) out[k] = obj[k];
+    if (obj && typeof obj === "object") for (const k of keys) if (k in obj) out[k] = /** @type {Record<string, unknown>} */ (obj)[k];
     return out;
   }
 
-  let saveTimer = null;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let saveTimer;
   function persistLocal() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) { /* ignore */ }
   }
@@ -222,24 +287,66 @@
 
   // ---------- Helpers ----------
 
-  const $ = (sel, el = document) => el.querySelector(sel);
-  const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
+  /**
+   * querySelector for elements the page is known to contain.
+   * @template {Element} [E=HTMLElement]
+   * @param {string} sel
+   * @param {ParentNode} [el]
+   * @returns {E}
+   */
+  const $ = (sel, el = document) => /** @type {E} */ (el.querySelector(sel));
+  /**
+   * @template {Element} [E=HTMLElement]
+   * @param {string} sel
+   * @param {ParentNode} [el]
+   * @returns {E[]}
+   */
+  const $$ = (sel, el = document) => /** @type {E[]} */ (Array.from(el.querySelectorAll(sel)));
   const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
   const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  /** @param {number} n */
   const money = (n) => usd.format(Math.abs(n) < 0.005 ? 0 : n);
+  /**
+   * @param {number} n  a fraction: 0.25 is "25.0%"
+   * @param {number} [d=1]  decimal places
+   */
   const pct = (n, d = 1) => `${(n * 100).toFixed(d)}%`;
+  /** @param {unknown} v  NaN when it isn't a number */
   const parseNum = (v) => {
     const n = parseFloat(String(v).replace(/[$,\s]/g, ""));
     return Number.isFinite(n) ? n : NaN;
   };
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  /** @param {unknown} s */
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => /** @type {Record<string, string>} */ ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  /** @param {string | null} [id]  a missing or unknown id gets "Other" */
   const category = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[CATEGORIES.length - 1];
   const viewPeriod = () => state.view || state.income.payPeriod;
+  /** @param {{ amount: number, recurrence: Period }} item */
   const annualOf = (item) => item.amount * PERIODS[item.recurrence].perYear;
+  /** @param {number} n */
   const ordinal = (n) => {
     const s = ["th", "st", "nd", "rd"], v = n % 100;
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
   };
+
+  /**
+   * `list.includes(v)`, and tells the type checker v is one of list's values.
+   * @template T
+   * @param {readonly T[]} list
+   * @param {unknown} v
+   * @returns {v is T}
+   */
+  function isOneOf(list, v) {
+    return /** @type {readonly unknown[]} */ (list).includes(v);
+  }
+
+  /**
+   * state.income or state.spouse as a plain record: inputs name their field in data-field /
+   * data-sfield, so those reads and writes go by a name from the page.
+   * @param {Income | Spouse} obj
+   * @returns {Record<string, unknown>}
+   */
+  const fields = (obj) => /** @type {Record<string, unknown>} */ (/** @type {object} */ (obj));
 
   function grossAnnual() {
     const inc = state.income;
@@ -253,6 +360,7 @@
 
   const isJoint = () => state.income.filingStatus === "mfj";
 
+  /** @returns {TaxInput} */
   function taxInput() {
     const inc = state.income;
     const sp = state.spouse;
@@ -289,16 +397,26 @@
     arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   };
 
+  /**
+   * <option> tags for [value, label] pairs.
+   * @param {[string | number, string][]} list
+   * @param {string | number | null} [selected]
+   */
   function options(list, selected) {
     return list.map(([v, label]) => `<option value="${esc(v)}"${String(v) === String(selected) ? " selected" : ""}>${esc(label)}</option>`).join("");
   }
 
   // ---------- Tabs ----------
 
+  /** @type {Tab} */
   let activeTab = "paycheck";
+  /**
+   * @param {string | undefined} tab  anything but a tab name opens "paycheck"
+   * @param {{ focus?: boolean }} [opts]
+   */
   function switchTab(tab, { focus = false } = {}) {
-    if (!TABS.includes(tab)) tab = "paycheck";
-    activeTab = tab;
+    if (!isOneOf(TABS, tab)) tab = "paycheck";
+    activeTab = /** @type {Tab} */ (tab);
     for (const b of $$(".tabs [data-tab]")) {
       const on = b.dataset.tab === tab;
       b.setAttribute("aria-selected", String(on));
@@ -313,6 +431,8 @@
   function setupTabs() {
     const nav = $(".tabs");
     nav.addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const b = e.target.closest("[data-tab]");
       if (b) switchTab(b.dataset.tab);
     });
@@ -322,18 +442,20 @@
       switchTab(TABS[(i + TABS.length) % TABS.length], { focus: true });
     });
     document.addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const link = e.target.closest("[data-goto]");
       if (!link) return;
       e.preventDefault();
       switchTab(link.dataset.goto);
       window.scrollTo({ top: 0 });
       // data-goto-focus="<selector>" puts the cursor where the user needs to type next.
-      const target = link.dataset.gotoFocus && document.querySelector(link.dataset.gotoFocus);
+      const target = link.dataset.gotoFocus && /** @type {HTMLElement | null} */ (document.querySelector(link.dataset.gotoFocus));
       if (target) target.focus({ preventScroll: true });
     });
     window.addEventListener("hashchange", () => switchTab(location.hash.slice(1)));
     let initial = location.hash.slice(1);
-    if (!TABS.includes(initial)) { try { initial = localStorage.getItem(TAB_KEY) || ""; } catch (_) { initial = ""; } }
+    if (!isOneOf(TABS, initial)) { try { initial = localStorage.getItem(TAB_KEY) || ""; } catch (_) { initial = ""; } }
     switchTab(initial);
   }
 
@@ -352,21 +474,21 @@
 
     refreshInputs();
 
-    for (const el of $$("input[data-field], select[data-field]")) {
+    for (const el of /** @type {(HTMLInputElement | HTMLSelectElement)[]} */ ($$("input[data-field], select[data-field]"))) {
       el.addEventListener("input", () => {
-        const f = el.dataset.field;
+        const f = /** @type {string} */ (el.dataset.field);
         if (el.tagName === "SELECT") {
-          state.income[f] = el.value;
+          fields(state.income)[f] = el.value;
           if (f === "payPeriod") state.view = null;
           if (f === "state") { state.income.localId = "none"; renderLocalOptions(); }
         } else if (el.type === "date") {
-          state.income[f] = el.value || "";
+          fields(state.income)[f] = el.value || "";
         } else {
           const n = parseNum(el.value);
           const bad = el.value.trim() !== "" && (!Number.isFinite(n) || n < 0 || (f === "k401Percent" && n > 100));
           el.classList.toggle("invalid", bad);
           if (bad) return;
-          state.income[f] = el.value.trim() === "" ? 0 : n;
+          fields(state.income)[f] = el.value.trim() === "" ? 0 : n;
         }
         commit();
       });
@@ -374,53 +496,62 @@
 
     for (const seg of $$(".seg[data-field]")) {
       seg.addEventListener("click", (e) => {
+        if (!(e.target instanceof Element)) return;
+        /** @type {HTMLElement | null} */
         const btn = e.target.closest("button[data-value]");
         if (!btn) return;
-        const f = seg.dataset.field;
-        state.income[f] = f === "localResident" ? btn.dataset.value === "true" : btn.dataset.value;
+        const f = /** @type {string} */ (seg.dataset.field);
+        fields(state.income)[f] = f === "localResident" ? btn.dataset.value === "true" : btn.dataset.value;
         commit();
       });
     }
 
     // Spouse's pay (data-sfield="...").
-    for (const el of $$("input[data-sfield], select[data-sfield]")) {
+    for (const el of /** @type {(HTMLInputElement | HTMLSelectElement)[]} */ ($$("input[data-sfield], select[data-sfield]"))) {
       el.addEventListener("input", () => {
-        const f = el.dataset.sfield;
-        if (el.tagName === "SELECT") { state.spouse[f] = el.value; commit(); return; }
+        const f = /** @type {string} */ (el.dataset.sfield);
+        if (el.tagName === "SELECT") { fields(state.spouse)[f] = el.value; commit(); return; }
         const n = parseNum(el.value);
         const bad = el.value.trim() !== "" && (!Number.isFinite(n) || n < 0 || (f === "k401Percent" && n > 100));
         el.classList.toggle("invalid", bad);
         if (bad) return;
-        state.spouse[f] = el.value.trim() === "" ? 0 : n;
+        fields(state.spouse)[f] = el.value.trim() === "" ? 0 : n;
         commit();
       });
     }
     for (const seg of $$(".seg[data-sfield]")) {
       seg.addEventListener("click", (e) => {
+        if (!(e.target instanceof Element)) return;
+        /** @type {HTMLElement | null} */
         const btn = e.target.closest("button[data-value]");
         if (!btn) return;
-        state.spouse[seg.dataset.sfield] = btn.dataset.value;
+        fields(state.spouse)[/** @type {string} */ (seg.dataset.sfield)] = btn.dataset.value;
         commit();
       });
     }
 
     $("#viewSeg").addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const btn = e.target.closest("button[data-value]");
       if (!btn) return;
-      state.view = btn.dataset.value === state.income.payPeriod ? null : btn.dataset.value;
+      // The buttons are VIEW_PERIODS.
+      state.view = btn.dataset.value === state.income.payPeriod ? null : /** @type {Period} */ (btn.dataset.value);
       commit();
     });
 
     $("#periodChips").addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const chip = e.target.closest("[data-period]");
       if (!chip) return;
       const p = chip.dataset.period;
-      if (PAY_PERIODS.includes(p)) {
+      if (isOneOf(PAY_PERIODS, p)) {
         state.income.payPeriod = p;
         state.view = null;
-        $("#payPeriod").value = p;
+        /** @type {HTMLSelectElement} */ ($("#payPeriod")).value = p;
       } else {
-        state.view = p;
+        state.view = /** @type {Period} */ (p); // the chips are VIEW_PERIODS
       }
       commit();
     });
@@ -428,7 +559,7 @@
 
   function syncSegments() {
     for (const seg of $$(".seg[data-field]")) {
-      const val = String(state.income[seg.dataset.field]);
+      const val = String(fields(state.income)[/** @type {string} */ (seg.dataset.field)]);
       for (const b of $$("button", seg)) {
         b.setAttribute("role", "radio");
         b.setAttribute("aria-checked", String(b.dataset.value === val));
@@ -436,7 +567,7 @@
     }
     for (const el of $$("[data-show]")) el.hidden = el.dataset.show !== state.income.mode;
     for (const seg of $$(".seg[data-sfield]")) {
-      const val = String(state.spouse[seg.dataset.sfield]);
+      const val = String(fields(state.spouse)[/** @type {string} */ (seg.dataset.sfield)]);
       for (const b of $$("button", seg)) {
         b.setAttribute("role", "radio");
         b.setAttribute("aria-checked", String(b.dataset.value === val));
@@ -452,7 +583,10 @@
     $("#residencySeg").hidden = !local || !["mi-city", "rate-on-wages", "percent-of-state-tax"].includes(local.type);
   }
 
-  /** The selected local tax entry from the state's list, or null. */
+  /**
+   * The selected local tax entry from the state's list, or null.
+   * @returns {StateLocal | null}
+   */
   function currentLocal() {
     const d = StateTax.get(state.income.state);
     return (d && (d.locals || []).find((l) => l.id === state.income.localId)) || null;
@@ -461,7 +595,9 @@
   function renderLocalOptions() {
     const d = StateTax.get(state.income.state);
     const locals = ((d && d.locals) || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    const pctOf = (v) => `${+(v * 100).toFixed(3)}%`;
+    /** @param {number | undefined} v */
+    const pctOf = (v) => `${+(Number(v) * 100).toFixed(3)}%`;
+    /** @param {StateLocal} l */
     const label = (l) => {
       if (l.type === "mi-city" || l.type === "rate-on-wages") return `${l.name} (${pctOf(l.resident ?? l.rate)}${l.nonresident != null ? ` / ${pctOf(l.nonresident)}` : ""})`;
       if (l.type === "rate-on-state-taxable") return `${l.name} (${pctOf(l.rate ?? l.resident)})`;
@@ -469,34 +605,36 @@
     };
     const valid = state.income.localId === "custom" || locals.some((l) => l.id === state.income.localId);
     if (!valid) state.income.localId = "none";
-    $("#localId").innerHTML = options([["none", "None"], ...locals.map((l) => [l.id, label(l)]), ["custom", "Other (enter a rate)"]], state.income.localId);
+    $("#localId").innerHTML = options([["none", "None"], ...locals.map((l) => /** @satisfies {[string, string]} */ ([l.id, label(l)])), ["custom", "Other (enter a rate)"]], state.income.localId);
   }
 
   function refreshInputs() {
-    for (const el of $$("input[data-field], select[data-field]")) {
+    for (const el of /** @type {(HTMLInputElement | HTMLSelectElement)[]} */ ($$("input[data-field], select[data-field]"))) {
       if (document.activeElement === el) continue;
-      const v = state.income[el.dataset.field];
+      const v = fields(state.income)[/** @type {string} */ (el.dataset.field)];
       // Blank instead of "0" so a new visitor sees empty fields with a 0 placeholder.
-      el.value = v === 0 && el.dataset.field !== "hoursPerWeek" ? "" : v ?? "";
+      el.value = v === 0 && el.dataset.field !== "hoursPerWeek" ? "" : String(v ?? "");
       el.classList.remove("invalid");
     }
-    for (const el of $$("input[data-sfield], select[data-sfield]")) {
+    for (const el of /** @type {(HTMLInputElement | HTMLSelectElement)[]} */ ($$("input[data-sfield], select[data-sfield]"))) {
       if (document.activeElement === el) continue;
-      const v = state.spouse[el.dataset.sfield];
-      el.value = v === 0 && el.dataset.sfield !== "hoursPerWeek" ? "" : v ?? "";
+      const v = fields(state.spouse)[/** @type {string} */ (el.dataset.sfield)];
+      el.value = v === 0 && el.dataset.sfield !== "hoursPerWeek" ? "" : String(v ?? "");
       el.classList.remove("invalid");
     }
     renderLocalOptions();
-    const adv = $("#moreOptions");
+    const adv = /** @type {HTMLDetailsElement | null} */ ($("#moreOptions"));
     if (adv && (state.income.extraWithholding > 0 || state.income.otherDependents > 0)) adv.open = true;
     syncSegments();
   }
 
   // ---------- Rendering ----------
 
+  /** @returns {AppContext} */
   function buildContext() {
     const r = Tax.calculate(taxInput());
     const pay = state.income.payPeriod;
+    /** @type {BaseContext & Partial<AppContext>} */
     const base = {
       state,
       result: r,
@@ -509,6 +647,7 @@
       itemsAnnual: state.items.reduce((s, i) => s + annualOf(i), 0),
       activeTab,
     };
+    /** @type {BudgetLine[]} */
     const extras = [];
     for (const m of modules) {
       if (!m.budgetLines) continue;
@@ -522,7 +661,7 @@
     base.extrasAnnual = extras.reduce((s, l) => s + l.annual, 0);
     base.budgetAnnual = base.itemsAnnual + base.extrasAnnual;
     base.leftAnnual = r.net - base.budgetAnnual;
-    return base;
+    return /** @type {AppContext} */ (base); // complete now
   }
 
   function render() {
@@ -539,6 +678,7 @@
     emit("render", ctx);
   }
 
+  /** @param {AppContext} ctx */
   function renderPaycheck(ctx) {
     const r = ctx.result;
     const you = r.people[0];
@@ -558,6 +698,7 @@
     // Just your paycheck: show it per paycheck. A spouse or other income: show the household per month.
     const household = !!partner || r.extras.gross > 0;
     const colPer = household ? 12 : per;
+    /** @param {number} annual */
     const p = (annual) => annual / colPer;
 
     if (household) {
@@ -600,13 +741,13 @@
       setAside.innerHTML = `No tax is withheld from your self-employment or other taxable income. Set aside about <b>${money(r.extras.setAside / 12)}</b> a month (${money(r.extras.setAside)} a year), or pay quarterly estimated taxes.`;
     }
 
-    const flow = [
+    const flow = /** @satisfies {[string, number, string][]} */ ([
       ["Taxes", r.taxes + r.extraWithholding, "var(--c-tax)"],
       ["401(k)", r.k401, "var(--c-ret)"],
       ["Benefits", r.benefits, "var(--c-ben)"],
       ["Budget", Math.min(ctx.budgetAnnual, Math.max(0, r.net)), "var(--c-bud)"],
       ["Left over", Math.max(0, ctx.leftAnnual), "var(--c-left)"],
-    ].filter(([, v]) => v > 0.005);
+    ]).filter(([, v]) => v > 0.005);
     const total = r.gross || 1;
     $("#flowHead").textContent = household ? "Where the household's money goes" : "Where each paycheck goes";
     $("#flowBar").innerHTML = flow.map(([k, v, c]) => `<span style="width:${(v / total) * 100}%;background:${c}" title="${k}: ${money(p(v))}"></span>`).join("");
@@ -618,7 +759,8 @@
     const capped = r.people.some((x) => x.k401Capped) ? ' <span class="rate">capped at limit</span>' : "";
     const k401Label = !household || !partner ? (you.isRoth ? "Roth 401(k)" : "401(k)") : "401(k)";
     const sd = StateTax.get(r.state.code);
-    const stateNoteText = !sd ? "" : sd.kind === "none" ? "no income tax" : sd.kind === "flat" ? `${+(sd.rate * 100).toFixed(3)}%` : "graduated";
+    const stateNoteText = !sd ? "" : sd.kind === "none" ? "no income tax" : sd.kind === "flat" ? `${+(Number(sd.rate) * 100).toFixed(3)}%` : "graduated";
+    /** @type {[label: string, amount: number, minus: boolean, note?: string | null][]} */
     const rows = [];
     if (household) {
       if (you.gross > 0) rows.push(["Your pay", you.gross, false]);
@@ -635,13 +777,14 @@
     rows.push(["Medicare", -r.medicare, true, "1.45%"]);
     if (r.seTax > 0) rows.push(["Self-employment tax", -r.seTax, true, "15.3%"]);
     if (r.state.code) rows.push([`${esc(r.state.name)} income tax`, -r.stateTax, true, stateNoteText]);
-    if (r.local.id !== "none") rows.push([`${esc(r.local.name || "Local")} tax`, -r.localTax, true, r.local.rate > 0 ? `${+(r.local.rate * 100).toFixed(3)}%` : null]);
+    if (r.local.id !== "none") rows.push([`${esc(r.local.name || "Local")} tax`, -r.localTax, true, r.local.rate != null && r.local.rate > 0 ? `${+(r.local.rate * 100).toFixed(3)}%` : null]);
     for (const item of r.payrollItems) if (item.amount > 0.005) rows.push([esc(item.name), -item.amount, true]);
     $("#breakdown tbody").innerHTML = rows.map(([label, v, minus, note]) =>
       `<tr class="${minus ? "minus" : ""}"><td>${label}${note ? `<span class="rate">${note}</span>` : ""}</td><td class="num">${money(p(v))}</td><td class="num">${money(v)}</td></tr>`
     ).join("");
     $("#breakdown tfoot").innerHTML = `<tr><td>Take-home pay</td><td class="num">${money(p(r.net))}</td><td class="num">${money(r.net)}</td></tr>`;
 
+    /** @type {Period[]} */
     const chipPeriods = ["weekly", "biweekly", "semimonthly", "monthly", "annual"];
     $("#periodChips").innerHTML = chipPeriods.map((cp) =>
       `<button type="button" class="chip" data-period="${cp}" aria-pressed="${cp === ctx.viewPeriod}"><div class="k">${PERIODS[cp].label}</div><div class="v">${money(r.net / PERIODS[cp].perYear)}</div></button>`
@@ -665,13 +808,14 @@
       : "";
   }
 
+  /** @param {TaxResult} r */
   function renderStateHint(r) {
     const d = StateTax.get(state.income.state);
     const el = $("#stateHint");
     if (!d) { el.textContent = "Your state and local taxes depend on where you live."; return; }
     const payroll = (d.payroll || []).map((x) => x.name);
     const what = d.kind === "none" ? `${d.name} has no income tax on wages.`
-      : d.kind === "flat" ? `${d.name} has a flat ${+(d.rate * 100).toFixed(3)}% income tax.`
+      : d.kind === "flat" ? `${d.name} has a flat ${+(Number(d.rate) * 100).toFixed(3)}% income tax.`
       : `${d.name} has graduated income tax rates.`;
     el.textContent = what + (payroll.length ? ` Also deducted from pay: ${payroll.join(", ")}.` : "") +
       (d.unverified ? ` ${d.name}'s 2026 figures haven't been checked against official sources yet, so treat them as rough.` : "");
@@ -679,7 +823,9 @@
 
   // ---------- Other income ----------
 
+  /** @type {string | null} */
   let editingIncomeId = null;
+  /** @param {string} id */
   const incomeKind = (id) => INCOME_KINDS.find((k) => k.id === id) || INCOME_KINDS[2];
 
   function renderIncome() {
@@ -694,18 +840,18 @@
         </div>
       </li>`).join("");
     $("#incomeList").hidden = !state.extraIncome.length;
-    $("#incTypeHint").textContent = incomeKind($("#incType").value).hint;
+    $("#incTypeHint").textContent = incomeKind(/** @type {HTMLSelectElement} */ ($("#incType")).value).hint;
     $("#incSubmit").textContent = editingIncomeId ? "Save income" : "Add income";
     $("#incCancel").hidden = !editingIncomeId;
   }
 
   function resetIncomeForm() {
     editingIncomeId = null;
-    $("#incName").value = "";
-    $("#incAmount").value = "";
-    $("#incRecurrence").value = "monthly";
-    $("#incType").value = "self";
-    $("#incOwner").value = "you";
+    /** @type {HTMLInputElement} */ ($("#incName")).value = "";
+    /** @type {HTMLInputElement} */ ($("#incAmount")).value = "";
+    /** @type {HTMLSelectElement} */ ($("#incRecurrence")).value = "monthly";
+    /** @type {HTMLSelectElement} */ ($("#incType")).value = "self";
+    /** @type {HTMLSelectElement} */ ($("#incOwner")).value = "you";
     for (const el of [$("#incName"), $("#incAmount")]) el.classList.remove("invalid");
   }
 
@@ -717,18 +863,19 @@
 
     $("#incomeForm").addEventListener("submit", (e) => {
       e.preventDefault();
-      const name = $("#incName").value.trim();
-      const amount = parseNum($("#incAmount").value);
+      const name = /** @type {HTMLInputElement} */ ($("#incName")).value.trim();
+      const amount = parseNum(/** @type {HTMLInputElement} */ ($("#incAmount")).value);
       const badAmt = !Number.isFinite(amount) || amount < 0;
       $("#incName").classList.toggle("invalid", !name);
       $("#incAmount").classList.toggle("invalid", badAmt);
       if (!name || badAmt) return;
-      const entry = {
+      // The selects' options are RECURRENCES, INCOME_KINDS and "you" / "spouse".
+      const entry = /** @type {Omit<ExtraIncome, "id">} */ ({
         name: name.slice(0, 60), amount,
-        recurrence: $("#incRecurrence").value,
-        type: $("#incType").value,
-        owner: isJoint() ? $("#incOwner").value : "you",
-      };
+        recurrence: /** @type {HTMLSelectElement} */ ($("#incRecurrence")).value,
+        type: /** @type {HTMLSelectElement} */ ($("#incType")).value,
+        owner: isJoint() ? /** @type {HTMLSelectElement} */ ($("#incOwner")).value : "you",
+      });
       const existing = editingIncomeId && state.extraIncome.find((x) => x.id === editingIncomeId);
       if (existing) Object.assign(existing, entry);
       else state.extraIncome.push({ id: uid(), ...entry });
@@ -739,19 +886,21 @@
     $("#incCancel").addEventListener("click", () => { resetIncomeForm(); renderIncome(); });
 
     $("#incomeList").addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const btn = e.target.closest("[data-inc]");
       if (!btn) return;
-      const id = btn.closest("li").dataset.id;
+      const id = /** @type {string} */ (/** @type {HTMLLIElement} */ (btn.closest("li")).dataset.id);
       const idx = state.extraIncome.findIndex((x) => x.id === id);
       if (idx < 0) return;
       const item = state.extraIncome[idx];
       if (btn.dataset.inc === "edit") {
         editingIncomeId = id;
-        $("#incName").value = item.name;
-        $("#incAmount").value = item.amount;
-        $("#incRecurrence").value = item.recurrence;
-        $("#incType").value = item.type;
-        $("#incOwner").value = item.owner;
+        /** @type {HTMLInputElement} */ ($("#incName")).value = item.name;
+        /** @type {HTMLInputElement} */ ($("#incAmount")).value = String(item.amount);
+        /** @type {HTMLSelectElement} */ ($("#incRecurrence")).value = item.recurrence;
+        /** @type {HTMLSelectElement} */ ($("#incType")).value = item.type;
+        /** @type {HTMLSelectElement} */ ($("#incOwner")).value = item.owner;
         renderIncome();
         $("#incAmount").focus();
         return;
@@ -768,24 +917,27 @@
 
   // ---------- Budget ----------
 
+  /** @type {string | null} */
   let editingId = null;
 
+  /** @returns {BudgetItem[]} */
   function sortedItems() {
     const items = state.items.slice();
     const { key, dir } = state.sort;
     if (!key) return items;
-    const cmp = {
+    const cmp = /** @type {Record<string, (a: BudgetItem, b: BudgetItem) => number>} */ ({
       name: (a, b) => a.name.localeCompare(b.name),
       recurrence: (a, b) => RECURRENCES.indexOf(a.recurrence) - RECURRENCES.indexOf(b.recurrence),
       amount: (a, b) => a.amount - b.amount,
       per: (a, b) => annualOf(a) - annualOf(b),
-    }[key];
+    })[key];
     if (!cmp) return items;
     items.sort(cmp);
     if (dir === "desc") items.reverse();
     return items;
   }
 
+  /** @param {AppContext} ctx */
   function renderBudget(ctx) {
     const r = ctx.result;
     const vp = ctx.viewPeriod;
@@ -814,6 +966,7 @@
     $(".meter-fill", meter).style.width = `${Math.min(100, used * 100)}%`;
     meter.title = `${pct(used, 0)} of take-home budgeted`;
 
+    /** @type {Map<string, number>} */
     const byCat = new Map();
     for (const i of state.items) byCat.set(i.category, (byCat.get(i.category) || 0) + annualOf(i));
     for (const l of ctx.extras) byCat.set(l.category || "other", (byCat.get(l.category || "other") || 0) + l.annual);
@@ -838,6 +991,7 @@
 
     const shares = [...state.items.map(annualOf), ...ctx.extras.map((l) => l.annual)].map((a) => a / (r.net || 1));
     const maxShare = Math.max(0.0001, ...shares);
+    /** @param {number} share */
     const bar = (share) => `<span class="pctbar"><i style="width:${Math.round((share / maxShare) * 48)}px"></i>${pct(share)}</span>`;
 
     const itemRows = sortedItems().map((i) => {
@@ -893,7 +1047,7 @@
     $("#emptyState").hidden = count > 0;
 
     if (editingId) {
-      const first = $(`#itemsTable tr.editing input[data-edit="name"]`);
+      const first = /** @type {HTMLInputElement | null} */ ($(`#itemsTable tr.editing input[data-edit="name"]`));
       if (first && !first.dataset.focused) { first.dataset.focused = "1"; first.focus(); first.select(); }
     }
   }
@@ -902,8 +1056,11 @@
     const form = $("#addForm");
     form.addEventListener("submit", (e) => {
       e.preventDefault();
+      /** @type {HTMLInputElement} */
       const nameEl = $("#newName");
+      /** @type {HTMLInputElement} */
       const amtEl = $("#newAmount");
+      /** @type {HTMLInputElement} */
       const dueEl = $("#newDueDay");
       const name = nameEl.value.trim();
       const amount = parseNum(amtEl.value);
@@ -913,11 +1070,13 @@
       nameEl.classList.toggle("invalid", !name);
       dueEl.classList.toggle("invalid", badDue);
       if (!name || badAmt || badDue) return;
-      state.items.push({
+      // The selects' options are RECURRENCES and CATEGORIES.
+      state.items.push(/** @type {BudgetItem} */ ({
         id: uid(), name: name.slice(0, 60), amount,
-        recurrence: $("#newRecurrence").value, category: $("#newCategory").value,
+        recurrence: /** @type {HTMLSelectElement} */ ($("#newRecurrence")).value,
+        category: /** @type {HTMLSelectElement} */ ($("#newCategory")).value,
         dueDay: clampDay(dueEl.value),
-      });
+      }));
       nameEl.value = "";
       amtEl.value = "";
       dueEl.value = "";
@@ -927,20 +1086,24 @@
     for (const el of [$("#newName"), $("#newAmount"), $("#newDueDay")]) el.addEventListener("input", () => el.classList.remove("invalid"));
 
     $("#billIdeas").addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const btn = e.target.closest("[data-idea]");
       const idea = btn && BILL_IDEAS.find((b) => b.name === btn.dataset.idea);
       if (!idea) return;
-      $("#newName").value = idea.name;
-      $("#newRecurrence").value = idea.recurrence;
-      $("#newCategory").value = idea.category;
+      /** @type {HTMLInputElement} */ ($("#newName")).value = idea.name;
+      /** @type {HTMLSelectElement} */ ($("#newRecurrence")).value = idea.recurrence;
+      /** @type {HTMLSelectElement} */ ($("#newCategory")).value = idea.category;
       $("#newAmount").focus();
     });
 
     const tbody = $("#itemsTable tbody");
     tbody.addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const btn = e.target.closest("button[data-act]");
       if (!btn) return;
-      const id = btn.closest("tr").dataset.id;
+      const id = /** @type {string} */ (/** @type {HTMLTableRowElement} */ (btn.closest("tr")).dataset.id);
       const act = btn.dataset.act;
       if (act === "edit") { editingId = id; render(); }
       else if (act === "cancel") { editingId = null; render(); }
@@ -948,16 +1111,20 @@
       else if (act === "delete") removeItem(id);
     });
     tbody.addEventListener("keydown", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLTableRowElement | null} */
       const tr = e.target.closest("tr.editing");
       if (!tr) return;
-      if (e.key === "Enter") { e.preventDefault(); commitEdit(tr.dataset.id); }
+      if (e.key === "Enter") { e.preventDefault(); commitEdit(/** @type {string} */ (tr.dataset.id)); }
       if (e.key === "Escape") { editingId = null; render(); }
     });
 
     $("#itemsTable thead").addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLElement | null} */
       const b = e.target.closest(".sort");
       if (!b) return;
-      const key = b.dataset.sort;
+      const key = /** @type {string} */ (b.dataset.sort); // every .sort button has data-sort
       const textual = key === "name" || key === "recurrence";
       if (state.sort.key !== key) state.sort = { key, dir: textual ? "asc" : "desc" };
       else if ((state.sort.dir === "asc") === textual) state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
@@ -966,12 +1133,16 @@
     });
   }
 
+  /** @param {string} id */
   function commitEdit(id) {
     const tr = $(`#itemsTable tr[data-id="${CSS.escape(id)}"]`);
     const item = state.items.find((i) => i.id === id);
     if (!tr || !item) return;
+    /** @type {HTMLInputElement} */
     const nameEl = $('[data-edit="name"]', tr);
+    /** @type {HTMLInputElement} */
     const amtEl = $('[data-edit="amount"]', tr);
+    /** @type {HTMLInputElement} */
     const dueEl = $('[data-edit="dueDay"]', tr);
     const name = nameEl.value.trim();
     const amount = parseNum(amtEl.value);
@@ -984,14 +1155,15 @@
     Object.assign(item, {
       name: name.slice(0, 60),
       amount,
-      recurrence: $('[data-edit="recurrence"]', tr).value,
-      category: $('[data-edit="category"]', tr).value,
+      recurrence: /** @type {HTMLSelectElement} */ ($('[data-edit="recurrence"]', tr)).value,
+      category: /** @type {HTMLSelectElement} */ ($('[data-edit="category"]', tr)).value,
       dueDay: clampDay(dueEl.value),
     });
     editingId = null;
     commit();
   }
 
+  /** @param {string} id */
   function removeItem(id) {
     const idx = state.items.findIndex((i) => i.id === id);
     if (idx < 0) return;
@@ -1006,8 +1178,14 @@
 
   // ---------- Toast ----------
 
+  /** @type {(() => void) | null} */
   let undo = null;
-  let toastTimer = null;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let toastTimer;
+  /**
+   * @param {string} text
+   * @param {(() => void) | null} [onUndo]  shows an Undo button
+   */
   function showToast(text, onUndo) {
     undo = onUndo || null;
     $("#toastText").textContent = text;
@@ -1037,7 +1215,8 @@
 
     $("#importBtn").addEventListener("click", () => $("#importFile").click());
     $("#importFile").addEventListener("change", async (e) => {
-      const file = e.target.files[0];
+      if (!(e.target instanceof HTMLInputElement)) return;
+      const file = /** @type {FileList} */ (e.target.files)[0];
       e.target.value = "";
       if (!file) return;
       try {
@@ -1057,6 +1236,7 @@
     });
 
     const THEME_KEY = "incomebudget:theme";
+    /** @param {string | null} t */
     const applyTheme = (t) => { if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; };
     try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { /* ignore */ }
     $("#themeBtn").addEventListener("click", () => {
@@ -1079,6 +1259,8 @@
    * Swap in a whole state object (import, reset, server sync).
    * markDirty: true bumps updatedAt and fires "save" (so sync pushes it);
    * false keeps the incoming updatedAt and only persists locally.
+   * @param {unknown} data
+   * @param {{ markDirty?: boolean }} [opts]
    */
   function replaceState(data, { markDirty = false } = {}) {
     state = sanitize(data);
@@ -1090,6 +1272,10 @@
     render();
   }
 
+  /**
+   * @template S
+   * @param {import("../types/app").AppModule<S>} mod
+   */
   function register(mod) {
     if (!mod || !mod.id) throw new Error("App.register: module needs an id");
     if (modules.some((m) => m.id === mod.id)) throw new Error(`App.register: duplicate module ${mod.id}`);
@@ -1128,6 +1314,11 @@
     commit,
     render,
     replaceState,
+    /**
+     * @template {AppEvent} E
+     * @param {E} event
+     * @param {(arg: EventArg[E]) => void} fn
+     */
     on: (event, fn) => { (listeners[event] || (listeners[event] = [])).push(fn); },
     context: () => buildContext(),
     switchTab,
