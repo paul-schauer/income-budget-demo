@@ -1,0 +1,499 @@
+/*
+ * Household tax engine: federal income tax, FICA, self-employment tax, and state/local
+ * tax (via src/tax/state-tax.ts) for you, an optional spouse on a joint return, and extra income.
+ *
+ * All figures are for tax year 2026. Sources for every figure are listed in
+ * docs/tax-sources.md. This is an estimate, not tax advice.
+ */
+import * as StateTax from "./state-tax";
+// Registers every state's data with the state engine.
+import "./states";
+import type {
+  Brackets, EarnerInput, FilingStatus, IncomeType, OtherIncomeInput, PayPeriod, PayrollAmount, Period, PeriodInfo,
+  Person, TaxApi, TaxInput, TaxResult,
+} from "./types";
+
+/** One earner while a household is being calculated (see core()). */
+interface Worker {
+  role: "you" | "spouse";
+  gross: number;
+  benefits: number;
+  k401: number;
+  k401Limit: number;
+  isRoth: boolean;
+  k401Capped: boolean;
+  /** gross less Section 125 benefits */
+  ficaWages: number;
+  /** ficaWages less traditional 401(k) */
+  fedWages: number;
+  extraWithholding: number;
+  overtimePremium: number;
+  /** from a second W-2 job */
+  extraWages: number;
+  /** self-employment net profit */
+  seProfit: number;
+  /** ficaWages + extraWages */
+  allWages: number;
+  socialSecurity: number;
+  medicare: number;
+  seEarnings: number;
+  seTax: number;
+  /** state payroll deductions */
+  payroll: number;
+}
+
+export const TAX_YEAR: number = 2026;
+
+// IRS Rev. Proc. 2025-32 (2026 inflation adjustments, post-OBBBA), IRS Notice 2025-67 (retirement limits).
+export const FEDERAL: TaxApi["FEDERAL"] = {
+  standardDeduction: { single: 16100, mfj: 32200, mfs: 16100, hoh: 24150 },
+  // [upper bound of bracket (taxable income), rate]
+  brackets: {
+    single: [[12400, 0.10], [50400, 0.12], [105700, 0.22], [201775, 0.24], [256225, 0.32], [640600, 0.35], [Infinity, 0.37]],
+    mfj:    [[24800, 0.10], [100800, 0.12], [211400, 0.22], [403550, 0.24], [512450, 0.32], [768700, 0.35], [Infinity, 0.37]],
+    mfs:    [[12400, 0.10], [50400, 0.12], [105700, 0.22], [201775, 0.24], [256225, 0.32], [384350, 0.35], [Infinity, 0.37]],
+    hoh:    [[17700, 0.10], [67450, 0.12], [105700, 0.22], [201750, 0.24], [256200, 0.32], [640600, 0.35], [Infinity, 0.37]],
+  },
+  childTaxCredit: 2200,
+  childTaxCreditRefundable: 1700, // informational; the engine treats credits as nonrefundable
+  otherDependentCredit: 500,
+  childTaxCreditPhaseoutStart: { single: 200000, mfj: 400000, mfs: 200000, hoh: 200000 },
+  childTaxCreditPhaseoutPer1000: 50,
+  k401Limit: 24500,
+  k401CatchUp: 8000,         // age 50+
+  k401CatchUp60to63: 11250,  // SECURE 2.0 higher catch-up for ages 60-63
+  // Pub. 15 (2026): optional flat rate on supplemental wages; mandatory rate above $1M for the year.
+  supplementalRate: 0.22,
+  supplementalRateOver1M: 0.37,
+  supplementalMandatoryThreshold: 1000000,
+  // OBBBA "no tax on overtime" (IRC 225, tax years 2025-2028): deduction for the FLSA overtime
+  // premium (the "half" of time-and-a-half). Taken on the annual return (Schedule 1-A); it does
+  // not change payroll withholding unless the employee claims it on W-4 step 4(b).
+  overtime: {
+    cap: { single: 12500, mfj: 25000, mfs: 0, hoh: 12500 }, // married filing separately can't claim it
+    phaseoutStart: { single: 150000, mfj: 300000, mfs: 150000, hoh: 150000 },
+    phaseoutPer1000: 100,
+    firstYear: 2025,
+    lastYear: 2028,
+  },
+  // Section 199A (Rev. Proc. 2025-32; OBBBA widened the phase-in range and added a $400 minimum).
+  // Modeled as the simple 20% below the threshold, phasing out linearly above it (the
+  // specified-service rule), which understates it for businesses that pay W-2 wages.
+  qbi: {
+    rate: 0.2,
+    threshold: { single: 201750, mfj: 403500, mfs: 201775, hoh: 201750 },
+    phaseIn: { single: 75000, mfj: 150000, mfs: 75000, hoh: 75000 },
+    minimum: 400,
+    minimumQbi: 1000,
+  },
+};
+
+export const FICA: TaxApi["FICA"] = {
+  socialSecurityRate: 0.062,
+  socialSecurityWageBase: 184500,
+  medicareRate: 0.0145,
+  additionalMedicareRate: 0.009,
+  // Self-employment tax: 92.35% of net earnings; 12.4% Social Security (sharing the wage base
+  // with W-2 wages) + 2.9% Medicare. Half of it is deductible from income.
+  selfEmploymentFactor: 0.9235,
+  selfEmploymentSocialSecurityRate: 0.124,
+  selfEmploymentMedicareRate: 0.029,
+  // Annual liability threshold (Form 8959) by filing status.
+  additionalMedicareThreshold: { single: 200000, mfj: 250000, mfs: 125000, hoh: 200000 },
+  // Employers start withholding the 0.9% once wages pass $200,000, regardless of filing status.
+  additionalMedicareWithholdingThreshold: 200000,
+};
+
+// Michigan Treasury: 4.25% for tax year 2026 (no triggered cut), $5,900 exemption (Form 446, 2026).
+// 2025 PA 24 lets Michigan returns deduct the same qualified overtime as the federal return for 2026-2028.
+export const MICHIGAN: TaxApi["MICHIGAN"] = {
+  rate: 0.0425,
+  personalExemption: 5900,
+  supplementalRate: 0.0425,
+  overtimeDeduction: TAX_YEAR >= 2026 && TAX_YEAR <= 2028,
+};
+
+// The 24 Michigan cities that levy an income tax (Michigan Treasury list).
+// Rates are resident / nonresident; exemption is per personal and dependency exemption.
+export const CITIES: TaxApi["CITIES"] = [
+  { id: "none", name: "No city tax", resident: 0, nonresident: 0, exemption: 0 },
+  { id: "albion", name: "Albion", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "battle-creek", name: "Battle Creek", resident: 0.01, nonresident: 0.005, exemption: 750 },
+  { id: "benton-harbor", name: "Benton Harbor", resident: 0.01, nonresident: 0.005, exemption: 750 },
+  { id: "big-rapids", name: "Big Rapids", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "detroit", name: "Detroit", resident: 0.024, nonresident: 0.012, exemption: 600 },
+  { id: "east-lansing", name: "East Lansing", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "flint", name: "Flint", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "grand-rapids", name: "Grand Rapids", resident: 0.015, nonresident: 0.0075, exemption: 600 },
+  { id: "grayling", name: "Grayling", resident: 0.01, nonresident: 0.005, exemption: 3000 },
+  { id: "hamtramck", name: "Hamtramck", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "highland-park", name: "Highland Park", resident: 0.02, nonresident: 0.01, exemption: 600 },
+  { id: "hudson", name: "Hudson", resident: 0.01, nonresident: 0.005, exemption: 1000 },
+  { id: "ionia", name: "Ionia", resident: 0.01, nonresident: 0.005, exemption: 700 },
+  { id: "jackson", name: "Jackson", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "lansing", name: "Lansing", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "lapeer", name: "Lapeer", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "muskegon", name: "Muskegon", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "muskegon-heights", name: "Muskegon Heights", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "pontiac", name: "Pontiac", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "port-huron", name: "Port Huron", resident: 0.01, nonresident: 0.005, exemption: 600 },
+  { id: "portland", name: "Portland", resident: 0.01, nonresident: 0.005, exemption: 1000 },
+  { id: "saginaw", name: "Saginaw", resident: 0.015, nonresident: 0.0075, exemption: 750 },
+  { id: "springfield", name: "Springfield", resident: 0.01, nonresident: 0.005, exemption: 750 },
+  { id: "walker", name: "Walker", resident: 0.01, nonresident: 0.005, exemption: 600 },
+];
+
+export const FILING_STATUSES: TaxApi["FILING_STATUSES"] = [
+  { id: "single", name: "Single" },
+  { id: "mfj", name: "Married, joint" },
+  { id: "mfs", name: "Married, separate" },
+  { id: "hoh", name: "Head of household" },
+];
+
+// Periods per year.
+export const PERIODS: Record<Period, PeriodInfo> = {
+  weekly: { label: "Weekly", perYear: 52, noun: "week" },
+  biweekly: { label: "Biweekly", perYear: 26, noun: "2 weeks" },
+  semimonthly: { label: "Semimonthly", perYear: 24, noun: "half-month" },
+  monthly: { label: "Monthly", perYear: 12, noun: "month" },
+  quarterly: { label: "Quarterly", perYear: 4, noun: "quarter" },
+  annual: { label: "Annual", perYear: 1, noun: "year" },
+};
+
+export const PAY_PERIODS: PayPeriod[] = ["weekly", "biweekly", "semimonthly", "monthly"];
+
+export function bracketTax(taxable: number, brackets: Brackets): number {
+  let tax = 0;
+  let lower = 0;
+  for (const [upper, rate] of brackets) {
+    if (taxable <= lower) break;
+    tax += (Math.min(taxable, upper) - lower) * rate;
+    lower = upper;
+  }
+  return tax;
+}
+
+function marginalBracket(taxable: number, brackets: Brackets) {
+  for (const [upper, rate] of brackets) {
+    if (taxable < upper) return rate;
+  }
+  return brackets[brackets.length - 1][1];
+}
+
+/** A positive finite number, or 0. */
+function num(v: unknown) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function statusOf(s: unknown): FilingStatus {
+  return typeof s === "string" && s in FEDERAL.standardDeduction ? (s as FilingStatus) : "single";
+}
+
+export function findCity(id: string) {
+  return CITIES.find((c) => c.id === id) || CITIES[0];
+}
+
+/** Elective-deferral limit including the catch-up for the given age (age optional). */
+export function k401LimitFor(age: unknown) {
+  const a = Number(age);
+  if (!Number.isFinite(a)) return FEDERAL.k401Limit;
+  if (a >= 60 && a <= 63) return FEDERAL.k401Limit + FEDERAL.k401CatchUp60to63;
+  if (a >= 50) return FEDERAL.k401Limit + FEDERAL.k401CatchUp;
+  return FEDERAL.k401Limit;
+}
+
+/**
+ * Qualified overtime deduction (IRC 225) for the year.
+ * premium: FLSA overtime premium actually paid (the "half" of time-and-a-half), annual.
+ * magi: modified AGI. Schedule 1-A: reduce by $100 per full $1,000 of MAGI over the threshold.
+ */
+export function overtimeDeduction(premium: number | undefined, filingStatus: string, magi: number) {
+  const status = statusOf(filingStatus);
+  const ot = FEDERAL.overtime;
+  if (TAX_YEAR < ot.firstYear || TAX_YEAR > ot.lastYear) return 0;
+  const capped = Math.min(num(premium), ot.cap[status]);
+  const excess = Math.max(0, num(magi) - ot.phaseoutStart[status]);
+  const reduction = Math.floor(excess / 1000) * ot.phaseoutPer1000;
+  return Math.max(0, capped - reduction);
+}
+
+/** Section 199A deduction for self-employment income (see FEDERAL.qbi). */
+export function qbiDeduction(qbi: number, taxableBeforeQbi: number, filingStatus: string) {
+  const status = statusOf(filingStatus);
+  const q = FEDERAL.qbi;
+  if (!(qbi > 0) || !(taxableBeforeQbi > 0)) return 0;
+  let deduction = q.rate * qbi;
+  const over = taxableBeforeQbi - q.threshold[status];
+  if (over > 0) deduction *= Math.max(0, 1 - over / q.phaseIn[status]);
+  if (qbi >= q.minimumQbi) deduction = Math.max(deduction, q.minimum);
+  return Math.min(deduction, q.rate * taxableBeforeQbi);
+}
+
+/**
+ * Federal withholding on a supplemental wage payment (bonus) using the flat-rate method:
+ * 22%, or 37% on the part of the year's supplemental wages above $1,000,000.
+ * amount: income-tax wages in this payment; priorSupplemental: supplemental wages already paid this year.
+ */
+export function supplementalFederalWithholding(amount: number, priorSupplemental?: number) {
+  const a = num(amount);
+  const prior = num(priorSupplemental);
+  const t = FEDERAL.supplementalMandatoryThreshold;
+  const over = Math.max(0, prior + a - t) - Math.max(0, prior - t);
+  return (a - over) * FEDERAL.supplementalRate + over * FEDERAL.supplementalRateOver1M;
+}
+
+export const INCOME_TYPES: IncomeType[] = ["w2", "self", "taxable", "nontaxable"];
+
+function earner(src: EarnerInput | null | undefined, role: "you" | "spouse"): Worker {
+  src = src || {};
+  const gross = num(src.grossAnnual);
+  const benefits = Math.min(num(src.preTaxBenefits), gross);
+  const k401Limit = k401LimitFor(src.age);
+  const hasAnnual = src.k401Annual != null && src.k401Annual !== "" && Number.isFinite(Number(src.k401Annual));
+  const k401Requested = hasAnnual ? num(src.k401Annual) : gross * Math.min(num(src.k401Percent), 100) / 100;
+  const k401 = Math.min(k401Requested, k401Limit, gross - benefits);
+  const isRoth = src.k401Type === "roth";
+  const ficaWages = gross - benefits;
+  return {
+    role, gross, benefits, k401, k401Limit, isRoth,
+    k401Capped: k401Requested > k401 + 0.005,
+    ficaWages,
+    fedWages: ficaWages - (isRoth ? 0 : k401),
+    extraWithholding: num(src.extraWithholdingAnnual),
+    overtimePremium: num(src.overtimePremium),
+    extraWages: 0, // from a second W-2 job
+    seProfit: 0,   // self-employment net profit
+    // Filled in by core():
+    allWages: 0,
+    socialSecurity: 0,
+    medicare: 0,
+    seEarnings: 0,
+    seTax: 0,
+    payroll: 0,
+  };
+}
+
+/** One pass over the whole household. calculate() wraps this with the per-person split. */
+function core(input: TaxInput) {
+  const status = statusOf(input.filingStatus);
+  const married = status === "mfj";
+  const dependents = Math.floor(num(input.dependents));
+  const otherDependents = Math.floor(num(input.otherDependents));
+
+  const people = [earner(input, "you")];
+  if (married && input.spouse && num(input.spouse.grossAnnual) > 0) people.push(earner(input.spouse, "spouse"));
+
+  const other = (Array.isArray(input.otherIncome) ? input.otherIncome : [])
+    .filter((x): x is OtherIncomeInput => !!x && num(x.annual) > 0)
+    .map((x) => ({
+      type: (INCOME_TYPES.includes(x.type as IncomeType) ? x.type : "taxable") as IncomeType,
+      annual: num(x.annual),
+      owner: x.owner === "spouse" && people.length > 1 ? 1 : 0,
+    }));
+  let taxableOther = 0;
+  let nontaxable = 0;
+  for (const x of other) {
+    if (x.type === "w2") people[x.owner].extraWages += x.annual;
+    else if (x.type === "self") people[x.owner].seProfit += x.annual;
+    else if (x.type === "taxable") taxableOther += x.annual;
+    else nontaxable += x.annual;
+  }
+
+  // FICA and self-employment tax, per person.
+  for (const p of people) {
+    p.allWages = p.ficaWages + p.extraWages;
+    p.socialSecurity = Math.min(p.allWages, FICA.socialSecurityWageBase) * FICA.socialSecurityRate;
+    p.medicare = p.allWages * FICA.medicareRate;
+    p.seEarnings = p.seProfit * FICA.selfEmploymentFactor;
+    const ssRoom = Math.max(0, FICA.socialSecurityWageBase - p.allWages);
+    p.seTax = Math.min(p.seEarnings, ssRoom) * FICA.selfEmploymentSocialSecurityRate +
+      p.seEarnings * FICA.selfEmploymentMedicareRate;
+  }
+  const medicareBase = people.reduce((s, p) => s + p.allWages + p.seEarnings, 0);
+  const additionalMedicare = Math.max(0, medicareBase - FICA.additionalMedicareThreshold[status]) * FICA.additionalMedicareRate;
+  const seTax = people.reduce((s, p) => s + p.seTax, 0);
+  const halfSeTax = seTax / 2;
+
+  // Federal income tax.
+  const sum = (f: (p: Worker) => number) => people.reduce((s, p) => s + f(p), 0);
+  const seProfit = sum((p) => p.seProfit);
+  const agi = Math.max(0, sum((p) => p.fedWages + p.extraWages) + seProfit - halfSeTax + taxableOther);
+  const otDeduction = overtimeDeduction(sum((p) => p.overtimePremium), status, agi);
+  const standardDeduction = FEDERAL.standardDeduction[status];
+  const taxableBeforeQbi = Math.max(0, agi - standardDeduction - otDeduction);
+  const qbi = qbiDeduction(Math.max(0, seProfit - halfSeTax), taxableBeforeQbi, status);
+  const federalTaxable = Math.max(0, taxableBeforeQbi - qbi);
+  const federalBeforeCredits = bracketTax(federalTaxable, FEDERAL.brackets[status]);
+  const phaseoutExcess = Math.max(0, agi - FEDERAL.childTaxCreditPhaseoutStart[status]);
+  const credits = Math.max(0,
+    dependents * FEDERAL.childTaxCredit + otherDependents * FEDERAL.otherDependentCredit -
+    Math.ceil(phaseoutExcess / 1000) * FEDERAL.childTaxCreditPhaseoutPer1000);
+  const federal = Math.max(0, federalBeforeCredits - credits);
+
+  // State and local. Older callers passed only a Michigan city, so no state means Michigan.
+  const stateCode = input.state === undefined ? "MI" : String(input.state || "");
+  const local = input.local || (input.cityId ? { id: input.cityId, resident: input.cityResident !== false } : { id: "none" });
+  const st = StateTax.compute(stateCode, {
+    status,
+    filers: married ? 2 : 1,
+    dependents: dependents + otherDependents,
+    earners: people.map((p) => ({ wages: p.allWages, k401Trad: p.isRoth ? 0 : p.k401 })),
+    agi,
+    federalTaxable,
+    federalStandardDeduction: standardDeduction,
+    overtimeDeduction: otDeduction,
+    federalTax: federal,
+    local,
+  });
+  people.forEach((p, i) => { p.payroll = (st.payroll[i] || []).reduce((s, x) => s + x.amount, 0); });
+
+  const payrollItems: PayrollAmount[] = [];
+  for (const list of st.payroll) {
+    for (const x of list) {
+      const found = payrollItems.find((y) => y.id === x.id);
+      if (found) found.amount += x.amount;
+      else payrollItems.push({ ...x });
+    }
+  }
+
+  const socialSecurity = sum((p) => p.socialSecurity);
+  const medicare = sum((p) => p.medicare) + additionalMedicare;
+  const stateTax = st.tax;
+  const localTax = st.local.tax;
+  const taxes = federal + socialSecurity + medicare + seTax + stateTax + localTax + st.payrollTotal;
+  const extraGross = other.reduce((s, x) => s + x.annual, 0);
+  const gross = sum((p) => p.gross) + extraGross;
+  const benefits = sum((p) => p.benefits);
+  const k401 = sum((p) => p.k401);
+  const extraWithholding = sum((p) => p.extraWithholding);
+  const net = gross - benefits - k401 - taxes - extraWithholding;
+
+  return {
+    status, people, other, additionalMedicare,
+    gross, wages: sum((p) => p.gross), extraGross, taxableOther, nontaxable, seProfit,
+    benefits, k401, federal, socialSecurity, medicare, seTax, stateTax, localTax,
+    payrollTotal: st.payrollTotal, payrollItems, taxes, extraWithholding, net,
+    agi, federalTaxable, standardDeduction, qbiDeduction: qbi, overtimeDeduction: otDeduction,
+    childCredit: Math.min(credits, federalBeforeCredits),
+    federalMarginal: marginalBracket(federalTaxable, FEDERAL.brackets[status]),
+    st, stateCode,
+  };
+}
+
+/**
+ * Input — your pay (top level, as before):
+ *   grossAnnual, filingStatus (single | mfj | mfs | hoh), k401Percent, k401Type (traditional | roth),
+ *   k401Annual?, age?, preTaxBenefits, dependents, otherDependents, extraWithholdingAnnual, overtimePremium?
+ * Household:
+ *   state: two-letter code ("" = none chosen; omitted = Michigan, for older callers)
+ *   local: { id, resident, customRate }   (older callers: cityId / cityResident)
+ *   spouse: { grossAnnual, k401Percent, k401Type, preTaxBenefits, extraWithholdingAnnual, age }  (joint returns only)
+ *   otherIncome: [{ type: "w2" | "self" | "taxable" | "nontaxable", annual, owner: "you" | "spouse" }]
+ *
+ * Top-level results are household totals. `people` has each earner's paycheck view: income tax on
+ * wages is shared by wages, and the extra tax caused by other income sits in `extras`.
+ */
+export function calculate(input: TaxInput): TaxResult {
+  input = input || {};
+  const full = core(input);
+  const wagesOnly = full.other.length ? core({ ...input, otherIncome: [] }) : full;
+
+  // Each person's paycheck: their own FICA and payroll deductions, plus a wage-weighted share of
+  // income tax and the additional Medicare tax on the wages-only household.
+  const shared = wagesOnly.federal + wagesOnly.stateTax + wagesOnly.localTax;
+  const weight = (p: Worker) => Math.max(0, p.fedWages);
+  const totalWeight = wagesOnly.people.reduce((s, p) => s + weight(p), 0);
+  const people: Person[] = wagesOnly.people.map((p) => {
+    const share = totalWeight > 0 ? weight(p) / totalWeight : 1 / wagesOnly.people.length;
+    const incomeTax = shared * share;
+    const medicare = p.medicare + wagesOnly.additionalMedicare * share;
+    const taxes = incomeTax + p.socialSecurity + medicare + p.payroll;
+    return {
+      role: p.role, gross: p.gross, benefits: p.benefits, k401: p.k401, k401Capped: p.k401Capped,
+      k401Limit: p.k401Limit, isRoth: p.isRoth, federal: wagesOnly.federal * share,
+      state: wagesOnly.stateTax * share, local: wagesOnly.localTax * share, incomeTax,
+      socialSecurity: p.socialSecurity, medicare, payroll: p.payroll, taxes,
+      extraWithholding: p.extraWithholding,
+      net: p.gross - p.benefits - p.k401 - taxes - p.extraWithholding,
+    };
+  });
+
+  // Other income: what it adds after the tax it causes. Tax on self-employment and other taxable
+  // income isn't withheld, so it's also reported as an amount to set aside.
+  const extrasTax = full.taxes - wagesOnly.taxes;
+  let setAside = 0;
+  if (full.other.some((x) => x.type === "self" || x.type === "taxable")) {
+    const withheldOnly = core({ ...input, otherIncome: (input.otherIncome || []).filter((x) => !!x && (x.type === "w2" || x.type === "nontaxable")) });
+    setAside = Math.max(0, full.taxes - withheldOnly.taxes);
+  }
+  const extras = {
+    gross: full.extraGross,
+    taxable: full.taxableOther,
+    nontaxable: full.nontaxable,
+    selfEmployment: full.seProfit,
+    seTax: full.seTax,
+    tax: extrasTax,
+    net: full.extraGross - extrasTax,
+    setAside,
+  };
+
+  const st = full.st;
+  const you = people[0];
+  return {
+    // Household totals
+    gross: full.gross,
+    wages: full.wages,
+    benefits: full.benefits,
+    k401: full.k401,
+    federal: full.federal,
+    socialSecurity: full.socialSecurity,
+    medicare: full.medicare,
+    seTax: full.seTax,
+    stateTax: full.stateTax,
+    localTax: full.localTax,
+    payroll: full.payrollTotal,
+    payrollItems: full.payrollItems,
+    taxes: full.taxes,
+    extraWithholding: full.extraWithholding,
+    net: full.net,
+    effectiveRate: full.gross > 0 ? full.taxes / full.gross : 0,
+    agi: full.agi,
+    federalTaxable: full.federalTaxable,
+    federalWages: full.agi,
+    ficaWages: full.people.reduce((s, p) => s + p.allWages, 0),
+    federalMarginal: full.federalMarginal,
+    childCredit: full.childCredit,
+    overtimeDeduction: full.overtimeDeduction,
+    qbiDeduction: full.qbiDeduction,
+    // State and local details
+    state: { code: st.code || "", name: st.name || "", kind: st.kind || "none", taxable: st.taxable || 0,
+      marginalRate: st.marginalRate || 0, supplementalRate: st.supplementalRate || 0,
+      overtimeDeduction: !!st.overtimeDeduction, unverified: !!st.unverified, notes: st.notes || [] },
+    local: { id: st.local.id || "none", name: st.local.name || "", rate: st.local.rate, tax: full.localTax },
+    // People and other income
+    people,
+    extras,
+    // Your own paycheck fields, for older callers
+    isRoth: you.isRoth,
+    k401Capped: you.k401Capped,
+    k401Limit: you.k401Limit,
+    // Older names for the state and local tax
+    michigan: full.stateTax,
+    michiganTaxable: st.taxable || 0,
+    city: full.localTax,
+    cityRate: st.local.rate || 0,
+    cityTaxable: 0,
+  };
+}
+
+/** Extra annual take-home from a raise of `amount` dollars on your pay. */
+export function raiseImpact(input: TaxInput, amount: number) {
+  const base = calculate(input);
+  const bumped = calculate(Object.assign({}, input, { grossAnnual: num(input.grossAnnual) + amount }));
+  return (bumped.net + bumped.extraWithholding) - (base.net + base.extraWithholding);
+}
+
+export function convert(amount: number, fromPeriod: Period, toPeriod: Period) {
+  return (amount * PERIODS[fromPeriod].perYear) / PERIODS[toPeriod].perYear;
+}

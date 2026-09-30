@@ -1,6 +1,6 @@
 # 2026 state tax figures: no-tax and flat-rate states
 
-Every figure in `js/states/no-tax-flat.js` and where it came from. Checked 2026-09-30 for tax year 2026.
+Every figure in `src/tax/states/no-tax-flat.ts` and where it came from. Checked 2026-09-30 for tax year 2026.
 
 **How these were checked.** The sandbox's network proxy blocked direct fetches of every state site (revenue departments, legislatures, paid-leave agencies, city sites), so no page could be opened and read in full. Figures were checked in three ways, and each row says which:
 

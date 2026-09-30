@@ -1,6 +1,6 @@
 # West and Plains states: 2026 figures and sources
 
-Figures in `js/states/west-plains.js`, tested by `test/states-west-plains.test.js`. Checked 2026-09-30.
+Figures in `src/tax/states/west-plains.ts`, tested by `test/states-west-plains.test.ts`. Checked 2026-09-30.
 
 ## How these were checked, and what's still open
 

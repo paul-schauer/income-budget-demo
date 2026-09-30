@@ -1,0 +1,9 @@
+{
+  // Node: the server and the tests. Tests import browser modules for their pure logic, so DOM types stay on.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["server/**/*.ts", "test/**/*.ts"],
+  "exclude": []
+}
