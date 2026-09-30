@@ -1,10 +1,19 @@
 {
-  // Tax engines and state data: plain JS checked by TypeScript (npm run typecheck).
-  // They run in the browser and in Node, so both sets of globals are available.
-  "extends": "./tsconfig.base.json",
+  // Browser code (src/, except the service worker). `npm run typecheck` runs this and the two below.
   "compilerOptions": {
-    "lib": ["ES2022", "DOM"],
-    "types": ["node"]
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
   },
-  "include": ["types/tax.d.ts", "types/app.d.ts", "types/globals.d.ts", "js/tax.js", "js/state-tax.js", "js/schedule.js", "js/states/*.js"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/sw.ts"]
 }

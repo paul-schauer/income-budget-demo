@@ -1,8 +1,9 @@
 {
   // Service worker: runs in the worker scope, not the page.
-  "extends": "./tsconfig.base.json",
+  "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2022", "WebWorker"]
   },
-  "include": ["sw.js"]
+  "include": ["src/sw.ts"],
+  "exclude": []
 }
