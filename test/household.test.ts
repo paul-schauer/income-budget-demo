@@ -1,14 +1,15 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const Tax = require("../js/tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as Tax from "../src/tax/tax";
+import type { EarnerInput, TaxInput, TaxResult } from "../src/tax/types";
 
-const near = (actual, expected, tol = 0.01) =>
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
 // No state or local tax, so each test isolates the federal and FICA math.
-const you = { grossAnnual: 80000, filingStatus: "mfj", k401Percent: 5, k401Type: "traditional", preTaxBenefits: 0, dependents: 0, state: "" };
-const spouse = { grossAnnual: 50000, k401Percent: 0, k401Type: "traditional", preTaxBenefits: 2000 };
-const sumPeople = (r) => r.people.reduce((s, p) => s + p.net, 0);
+const you: TaxInput = { grossAnnual: 80000, filingStatus: "mfj", k401Percent: 5, k401Type: "traditional", preTaxBenefits: 0, dependents: 0, state: "" };
+const spouse: EarnerInput = { grossAnnual: 50000, k401Percent: 0, k401Type: "traditional", preTaxBenefits: 2000 };
+const sumPeople = (r: TaxResult) => r.people.reduce((s, p) => s + p.net, 0);
 
 test("a spouse's pay is combined on a joint return with separate FICA", () => {
   const r = Tax.calculate({ ...you, spouse });
@@ -108,7 +109,8 @@ test("extra income can belong to a spouse", () => {
 });
 
 test("junk extra income is ignored", () => {
-  const r = Tax.calculate({ ...you, otherIncome: [null, { type: "w2", annual: -5 }, { type: "bogus", annual: "abc" }] });
+  // "abc" isn't a number on purpose.
+  const r = Tax.calculate({ ...you, otherIncome: [null, { type: "w2", annual: -5 }, { type: "bogus", annual: "abc" as unknown as number }] });
   near(r.net, Tax.calculate(you).net);
 });
 

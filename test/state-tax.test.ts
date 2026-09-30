@@ -1,13 +1,19 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const S = require("../js/state-tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as S from "../src/tax/state-tax";
+import * as Tax from "../src/tax/tax";
+import { STATES as NO_TAX_FLAT } from "../src/tax/states/no-tax-flat";
+import type { StateContext, StateTable, StateTaxApi } from "../src/tax/types";
 
-S.register(require("../js/states/no-tax-flat.js"));
+// The module's exports match the StateTaxApi type that other code can use to describe it.
+S satisfies StateTaxApi;
 
-const near = (actual, expected, tol = 0.01) =>
+S.register(NO_TAX_FLAT);
+
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
-const household = (over = {}) => ({
+const household = (over: Partial<StateContext> = {}): StateContext => ({
   status: "mfj",
   filers: 2,
   dependents: 1,
@@ -21,7 +27,7 @@ const household = (over = {}) => ({
 });
 
 // Synthetic entries that exercise every field.
-const FAKE = {
+const FAKE: StateTable = {
   ZG: {
     code: "ZG", name: "Graduatedland", year: 2026, kind: "graduated",
     brackets: {
@@ -71,7 +77,6 @@ test("Michigan: 4.25% on AGI less $5,900 per filer and dependent, city tax on wa
 });
 
 test("Michigan matches the original single-state calculator", () => {
-  const Tax = require("../js/tax.js");
   const old = Tax.calculate({ grossAnnual: 70000, filingStatus: "single", k401Percent: 5, preTaxBenefits: 1200, dependents: 0, cityId: "detroit" });
   const r = S.compute("MI", {
     status: "single", filers: 1, dependents: 0,

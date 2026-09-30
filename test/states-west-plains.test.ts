@@ -1,18 +1,19 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const S = require("../js/state-tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as S from "../src/tax/state-tax";
+import { STATES as WEST } from "../src/tax/states/west-plains";
+import type { StateContext } from "../src/tax/types";
 
-const WEST = require("../js/states/west-plains.js");
 S.register(WEST);
 
 const CODES = ["CA", "OR", "HI", "NM", "MT", "ND", "NE", "KS", "MN"];
 
-const near = (actual, expected, tol = 0.01) =>
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
 // Household 1: single, $55,000 wages, 5% traditional 401(k), no dependents.
 // Federal: AGI 52,250; taxable 52,250 - 16,100 = 36,150; tax 10% to 12,400 then 12%.
-const single = (over = {}) => ({
+const single = (over: Partial<StateContext> = {}): StateContext => ({
   status: "single",
   filers: 1,
   dependents: 0,
@@ -28,7 +29,7 @@ const single = (over = {}) => ({
 
 // Household 2: married filing jointly, $95,000 (5% 401(k)) + $45,000 wages, two children.
 // Federal: AGI 135,250; taxable 135,250 - 32,200 = 103,050; tax less the $2,200 child tax credit per child.
-const family = (over = {}) => ({
+const family = (over: Partial<StateContext> = {}): StateContext => ({
   status: "mfj",
   filers: 2,
   dependents: 2,
@@ -43,7 +44,7 @@ const family = (over = {}) => ({
 });
 
 // A single filer with no 401(k), for high-income phase-out checks.
-const earner = (wages, over = {}) => single({
+const earner = (wages: number, over: Partial<StateContext> = {}) => single({
   earners: [{ wages, k401Trad: 0 }],
   agi: wages,
   federalTaxable: wages - 16100,
@@ -64,8 +65,8 @@ test("all nine states are present and listed", () => {
 });
 
 test("household fixtures carry the federal figures from the brief", () => {
-  near(single().federalTax, 4090);
-  near(family().federalTax, 7695);
+  near(single().federalTax!, 4090);
+  near(family().federalTax!, 7695);
 });
 
 // ---------- California ----------
@@ -156,9 +157,10 @@ test("Oregon payroll: Paid Leave 0.6% to the $184,500 cap, transit tax 0.1%", ()
 });
 
 test("Oregon locals: Metro SHS and Multnomah Preschool for All on Oregon taxable income", () => {
-  const OR = S.get("OR");
-  const ctxS = { status: "single", filers: 1, dependents: 0 };
-  const ctxJ = { status: "mfj", filers: 2, dependents: 0 };
+  const OR = S.get("OR")!;
+  // computeLocal() only reads these from the household.
+  const ctxS = { status: "single", filers: 1, dependents: 0 } as StateContext;
+  const ctxJ = { status: "mfj", filers: 2, dependents: 0 } as StateContext;
   near(S.computeLocal(OR, { id: "metro-shs" }, 0, 150000, ctxS).tax, (150000 - 128000) * 0.01);
   near(S.computeLocal(OR, { id: "metro-shs" }, 0, 150000, ctxJ).tax, 0);
   near(S.computeLocal(OR, { id: "metro-shs" }, 0, 300000, ctxJ).tax, (300000 - 205000) * 0.01);
@@ -318,5 +320,5 @@ test("Minnesota Paid Leave: 0.44% employee share to the $184,500 cap", () => {
 // ---------- Cross-state ----------
 
 test("no West/Plains state taxes traditional 401(k) deferrals", () => {
-  for (const code of CODES) assert.equal(S.get(code).taxes401k, false, code);
+  for (const code of CODES) assert.equal(S.get(code)!.taxes401k, false, code);
 });

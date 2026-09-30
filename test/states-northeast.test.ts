@@ -1,20 +1,22 @@
 // Northeast and Mid-Atlantic states: NY, NJ, CT, RI, VT, ME, DE, MD, DC.
 // Every expected tax below is worked by hand from the published 2026 schedules
 // (see docs/state-tax-sources/northeast.md), not copied from the engine.
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const S = require("../js/state-tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as S from "../src/tax/state-tax";
+import { STATES } from "../src/tax/states/northeast";
+import type { StateContext } from "../src/tax/types";
 
-S.register(require("../js/states/northeast.js"));
+S.register(STATES);
 
-const near = (actual, expected, tol = 0.01) =>
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
 const CODES = ["NY", "NJ", "CT", "RI", "VT", "ME", "DE", "MD", "DC"];
 
 // Household 1: single, $55,000 wages, 5% traditional 401(k) ($2,750), no dependents.
 // AGI = 55,000 - 2,750 = 52,250. Federal taxable = 52,250 - 16,100 = 36,150.
-const single = (over = {}) => ({
+const single = (over: Partial<StateContext> = {}): StateContext => ({
   status: "single",
   filers: 1,
   dependents: 0,
@@ -29,7 +31,7 @@ const single = (over = {}) => ({
 
 // Household 2: married filing jointly, $95,000 + $45,000 wages, 2 children, no 401(k).
 // AGI = 140,000. Federal taxable = 140,000 - 32,200 = 107,800.
-const joint = (over = {}) => ({
+const joint = (over: Partial<StateContext> = {}): StateContext => ({
   status: "mfj",
   filers: 2,
   dependents: 2,
@@ -43,7 +45,7 @@ const joint = (over = {}) => ({
 });
 
 // A single filer with other wages, for phase-out checks.
-const singleAt = (agi) => single({ earners: [{ wages: agi, k401Trad: 0 }], agi, federalTaxable: Math.max(0, agi - 16100) });
+const singleAt = (agi: number) => single({ earners: [{ wages: agi, k401Trad: 0 }], agi, federalTaxable: Math.max(0, agi - 16100) });
 
 test("every Northeast entry passes validation", () => {
   for (const code of CODES) assert.deepEqual(S.validate(S.get(code)), [], code);
@@ -51,13 +53,13 @@ test("every Northeast entry passes validation", () => {
 
 test("all nine jurisdictions are registered", () => {
   for (const code of CODES) assert.ok(S.get(code), code);
-  assert.equal(S.get("DC").name, "District of Columbia");
+  assert.equal(S.get("DC")!.name, "District of Columbia");
 });
 
 test("no Northeast state taxes 401(k) deferrals or follows the federal overtime deduction", () => {
   for (const code of CODES) {
-    assert.equal(S.get(code).taxes401k, false, code);
-    assert.equal(S.get(code).overtimeDeduction, false, code);
+    assert.equal(S.get(code)!.taxes401k, false, code);
+    assert.equal(S.get(code)!.overtimeDeduction, false, code);
   }
   // Overtime input changes nothing.
   near(S.compute("NJ", single({ overtimeDeduction: 5000 })).tax, S.compute("NJ", single()).tax);
@@ -281,7 +283,7 @@ test("Maryland counties: flat, graduated (Anne Arundel) and rate-by-income (Fred
   near(S.compute("MD", { ...singleAt(206550), local: { id: "frederick" } }).local.tax, 203200 * 0.032);
   // Counties tax residents only.
   near(S.compute("MD", single({ local: { id: "montgomery", resident: false } })).local.tax, 0);
-  assert.equal(S.get("MD").locals.length, 24); // 23 counties and Baltimore City
+  assert.equal(S.get("MD")!.locals!.length, 24); // 23 counties and Baltimore City
 });
 
 test("Maryland payroll: no FAMLI contributions in 2026", () => {

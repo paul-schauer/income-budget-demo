@@ -1,6 +1,8 @@
 /**
- * Types for the tax engines: js/tax.js (household, federal, FICA) and js/state-tax.js (state + local).
- * Type-only: nothing here exists at runtime. The JS files reference these through JSDoc.
+ * Types for the tax engines: src/tax/tax.ts (household, federal, FICA) and src/tax/state-tax.ts
+ * (state + local), and for the payday schedule in src/lib/schedule.ts.
+ * Type-only: nothing here exists at runtime. TaxApi, StateTaxApi and ScheduleApi describe each
+ * module's exports (what `import * as Tax from "../tax/tax"` and the like give you).
  */
 
 export type FilingStatus = "single" | "mfj" | "mfs" | "hoh";

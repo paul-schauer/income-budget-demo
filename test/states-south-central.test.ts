@@ -1,16 +1,18 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const S = require("../js/state-tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as S from "../src/tax/state-tax";
+import { STATES } from "../src/tax/states/south-central";
+import type { StateContext } from "../src/tax/types";
 
-S.register(require("../js/states/south-central.js"));
+S.register(STATES);
 
 const CODES = ["AL", "AR", "KY", "LA", "MO", "MS", "NC", "OK", "SC", "VA", "WI", "WV"];
 
-const near = (actual, expected, tol = 0.01) =>
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
 // Household 1: single, $55,000 wages, 5% traditional 401(k), no dependents.
-const single = (over = {}) => ({
+const single = (over: Partial<StateContext> = {}): StateContext => ({
   status: "single",
   filers: 1,
   dependents: 0,
@@ -25,7 +27,7 @@ const single = (over = {}) => ({
 });
 
 // Household 2: married filing jointly, $95,000 (5% traditional 401(k)) + $45,000 wages, 2 children.
-const married = (over = {}) => ({
+const married = (over: Partial<StateContext> = {}): StateContext => ({
   status: "mfj",
   filers: 2,
   dependents: 2,
@@ -39,7 +41,7 @@ const married = (over = {}) => ({
   ...over,
 });
 
-const tax = (code, ctx) => S.compute(code, ctx).tax;
+const tax = (code: string, ctx: StateContext) => S.compute(code, ctx).tax;
 
 test("every south-central entry passes validation", () => {
   for (const code of CODES) assert.deepEqual(S.validate(S.get(code)), [], code);
@@ -48,7 +50,7 @@ test("every south-central entry passes validation", () => {
 test("all 12 states are present", () => {
   const listed = S.list().map((s) => s.code);
   for (const code of CODES) assert.ok(listed.includes(code), code);
-  assert.deepEqual(Object.keys(require("../js/states/south-central.js")).sort(), [...CODES].sort());
+  assert.deepEqual(Object.keys(STATES).sort(), [...CODES].sort());
 });
 
 test("Alabama: AGI-based deductions and exemptions, federal income tax deduction", () => {
@@ -158,7 +160,7 @@ test("the federal overtime deduction doesn't carry over to these states' taxable
 });
 
 test("local taxes: Birmingham, Kansas City, St. Louis, Louisville, Lexington", () => {
-  const local = (code, id, resident = true) => S.compute(code, single({ local: { id, resident } })).local.tax;
+  const local = (code: string, id: string, resident = true) => S.compute(code, single({ local: { id, resident } })).local.tax;
   near(local("AL", "birmingham"), 55000 * 0.01);
   near(local("AL", "birmingham", false), 55000 * 0.01);
   near(local("MO", "kansas-city"), 55000 * 0.01);

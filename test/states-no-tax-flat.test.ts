@@ -1,11 +1,12 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const S = require("../js/state-tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as S from "../src/tax/state-tax";
+import { STATES as DATA } from "../src/tax/states/no-tax-flat";
+import type { StateContext } from "../src/tax/types";
 
-const DATA = require("../js/states/no-tax-flat.js");
 S.register(DATA);
 
-const near = (actual, expected, tol = 0.01) =>
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
 const NO_TAX = ["AK", "FL", "NV", "NH", "SD", "TN", "TX", "WA", "WY"];
@@ -15,7 +16,7 @@ const FLAT = ["AZ", "CO", "GA", "ID", "IL", "IN", "IA", "MI", "PA", "UT", "OH", 
 const FED_STD = { single: 16100, mfj: 32200 };
 
 // Household A: single, $55,000 wages, 5% traditional 401(k), no dependents.
-const single = (over = {}) => ({
+const single = (over: Partial<StateContext> = {}): StateContext => ({
   status: "single",
   filers: 1,
   dependents: 0,
@@ -29,7 +30,7 @@ const single = (over = {}) => ({
 });
 
 // Household B: married filing jointly, $95,000 + $45,000 wages (5% traditional 401(k) each), 2 children.
-const joint = (over = {}) => ({
+const joint = (over: Partial<StateContext> = {}): StateContext => ({
   status: "mfj",
   filers: 2,
   dependents: 2,
@@ -52,10 +53,10 @@ test("every entry passes validation", () => {
 test("all 21 states are present with the right kind", () => {
   assert.deepEqual(Object.keys(DATA).sort(), [...NO_TAX, ...FLAT].sort());
   assert.equal(Object.keys(DATA).length, 21);
-  for (const code of NO_TAX) assert.equal(S.get(code).kind, "none", code);
-  for (const code of FLAT) assert.ok(["flat", "graduated"].includes(S.get(code).kind), code);
-  assert.equal(S.get("OH").kind, "graduated"); // 0% band, then 2.75%
-  assert.equal(S.get("ID").kind, "graduated"); // 0% band, then 5.3%
+  for (const code of NO_TAX) assert.equal(S.get(code)!.kind, "none", code);
+  for (const code of FLAT) assert.ok(["flat", "graduated"].includes(S.get(code)!.kind), code);
+  assert.equal(S.get("OH")!.kind, "graduated"); // 0% band, then 2.75%
+  assert.equal(S.get("ID")!.kind, "graduated"); // 0% band, then 5.3%
 });
 
 test("notes are short and at most two per state", () => {
@@ -195,34 +196,34 @@ test("overtime flag is set only where the state allows the deduction", () => {
 });
 
 test("payroll: Washington PFML (capped) and WA Cares (uncapped)", () => {
-  const [low, high] = S.compute("WA", joint({ earners: [{ wages: 60000 }, { wages: 200000 }] })).payroll;
-  near(low.find((p) => p.id === "wa-pfml").amount, 60000 * 0.0113 * 0.7143);
-  near(high.find((p) => p.id === "wa-pfml").amount, 184500 * 0.0113 * 0.7143);
-  near(low.find((p) => p.id === "wa-cares").amount, 60000 * 0.0058);
-  near(high.find((p) => p.id === "wa-cares").amount, 200000 * 0.0058);
+  const [low, high] = S.compute("WA", joint({ earners: [{ wages: 60000, k401Trad: 0 }, { wages: 200000, k401Trad: 0 }] })).payroll;
+  near(low.find((p) => p.id === "wa-pfml")!.amount, 60000 * 0.0113 * 0.7143);
+  near(high.find((p) => p.id === "wa-pfml")!.amount, 184500 * 0.0113 * 0.7143);
+  near(low.find((p) => p.id === "wa-cares")!.amount, 60000 * 0.0058);
+  near(high.find((p) => p.id === "wa-cares")!.amount, 200000 * 0.0058);
 });
 
 test("payroll: Alaska unemployment insurance up to $54,200", () => {
-  const r = S.compute("AK", joint({ earners: [{ wages: 40000 }, { wages: 90000 }] }));
+  const r = S.compute("AK", joint({ earners: [{ wages: 40000, k401Trad: 0 }, { wages: 90000, k401Trad: 0 }] }));
   near(r.payroll[0][0].amount, 40000 * 0.005);
   near(r.payroll[1][0].amount, 54200 * 0.005);
   near(r.payrollTotal, 40000 * 0.005 + 54200 * 0.005);
 });
 
 test("payroll: Colorado FAMLI and Massachusetts PFML stop at the $184,500 wage base", () => {
-  near(S.payrollFor(S.get("CO"), 80000)[0].amount, 80000 * 0.0044);
-  near(S.payrollFor(S.get("CO"), 250000)[0].amount, 184500 * 0.0044);
-  near(S.payrollFor(S.get("MA"), 80000)[0].amount, 80000 * (0.0018 + 0.4 * 0.007));
-  near(S.payrollFor(S.get("MA"), 250000)[0].amount, 184500 * (0.0018 + 0.4 * 0.007));
+  near(S.payrollFor(S.get("CO")!, 80000)[0].amount, 80000 * 0.0044);
+  near(S.payrollFor(S.get("CO")!, 250000)[0].amount, 184500 * 0.0044);
+  near(S.payrollFor(S.get("MA")!, 80000)[0].amount, 80000 * (0.0018 + 0.4 * 0.007));
+  near(S.payrollFor(S.get("MA")!, 250000)[0].amount, 184500 * (0.0018 + 0.4 * 0.007));
 });
 
 test("payroll: Pennsylvania unemployment compensation has no cap", () => {
-  near(S.payrollFor(S.get("PA"), 55000)[0].amount, 55000 * 0.0007);
-  near(S.payrollFor(S.get("PA"), 500000)[0].amount, 500000 * 0.0007);
+  near(S.payrollFor(S.get("PA")!, 55000)[0].amount, 55000 * 0.0007);
+  near(S.payrollFor(S.get("PA")!, 500000)[0].amount, 500000 * 0.0007);
 });
 
 test("Pennsylvania locals: Philadelphia wage tax and Pittsburgh EIT", () => {
-  const at = (id, resident = true) => S.compute("PA", single({ local: { id, resident } })).local;
+  const at = (id: string, resident = true) => S.compute("PA", single({ local: { id, resident } })).local;
   near(at("philadelphia").tax, 55000 * 0.03735);
   near(at("philadelphia", false).tax, 55000 * 0.03425);
   near(at("pittsburgh").tax, 55000 * 0.03);
@@ -231,7 +232,7 @@ test("Pennsylvania locals: Philadelphia wage tax and Pittsburgh EIT", () => {
 });
 
 test("Ohio locals: Columbus, Cleveland and Cincinnati tax wages at the same rate for everyone", () => {
-  const at = (id, resident = true) => S.compute("OH", single({ local: { id, resident } })).local;
+  const at = (id: string, resident = true) => S.compute("OH", single({ local: { id, resident } })).local;
   near(at("columbus").tax, 55000 * 0.025);
   near(at("columbus", false).tax, 55000 * 0.025);
   near(at("cleveland").tax, 55000 * 0.025);

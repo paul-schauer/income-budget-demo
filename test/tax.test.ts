@@ -1,11 +1,15 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const Tax = require("../js/tax.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as Tax from "../src/tax/tax";
+import type { FilingStatus, TaxApi, TaxInput } from "../src/tax/types";
 
-const near = (actual, expected, tol = 0.01) =>
+// The module's exports match the TaxApi type that other code can use to describe it.
+Tax satisfies TaxApi;
+
+const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
 
-const base = {
+const base: TaxInput = {
   grossAnnual: 92000,
   filingStatus: "mfj",
   k401Percent: 4,
@@ -23,12 +27,12 @@ test("bracket math walks each bracket", () => {
 });
 
 test("2026 bracket thresholds and standard deductions match Rev. Proc. 2025-32", () => {
-  const tops = (s) => Tax.FEDERAL.brackets[s].slice(0, -1).map(([u]) => u);
+  const tops = (s: FilingStatus) => Tax.FEDERAL.brackets[s].slice(0, -1).map(([u]) => u);
   assert.deepEqual(tops("single"), [12400, 50400, 105700, 201775, 256225, 640600]);
   assert.deepEqual(tops("mfj"), [24800, 100800, 211400, 403550, 512450, 768700]);
   assert.deepEqual(tops("mfs"), [12400, 50400, 105700, 201775, 256225, 384350]);
   assert.deepEqual(tops("hoh"), [17700, 67450, 105700, 201750, 256200, 640600]);
-  for (const s of ["single", "mfj", "mfs", "hoh"]) {
+  for (const s of ["single", "mfj", "mfs", "hoh"] as const) {
     assert.deepEqual(Tax.FEDERAL.brackets[s].map(([, r]) => r), [0.10, 0.12, 0.22, 0.24, 0.32, 0.35, 0.37]);
   }
   assert.deepEqual(Tax.FEDERAL.standardDeduction, { single: 16100, mfj: 32200, mfs: 16100, hoh: 24150 });
@@ -157,7 +161,7 @@ test("Michigan 2026: 4.25% and $5,900 per exemption", () => {
 test("all 24 Michigan income-tax cities with verified rates and exemptions", () => {
   const cities = Tax.CITIES.filter((c) => c.id !== "none");
   assert.equal(cities.length, 24);
-  const expect = {
+  const expect: Record<string, [number, number]> = {
     albion: [0.01, 600], "battle-creek": [0.01, 750], "benton-harbor": [0.01, 750], "big-rapids": [0.01, 600],
     detroit: [0.024, 600], "east-lansing": [0.01, 600], flint: [0.01, 600], "grand-rapids": [0.015, 600],
     grayling: [0.01, 3000], hamtramck: [0.01, 600], "highland-park": [0.02, 600], hudson: [0.01, 1000],

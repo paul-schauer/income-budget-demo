@@ -1,6 +1,10 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const S = require("../js/schedule.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import * as S from "../src/lib/schedule";
+import type { ScheduleApi } from "../src/tax/types";
+
+// The module's exports match the ScheduleApi type that other code can use to describe it.
+S satisfies ScheduleApi;
 
 test("biweekly steps 14 days from an anchor, even an old one", () => {
   assert.deepEqual(S.paydays("2026-01-02", "biweekly", "2026-09-29", 3), ["2026-10-09", "2026-10-23", "2026-11-06"]);
