@@ -230,6 +230,22 @@ test("New Mexico: schedules reproduce the base tax printed in HB 252", () => {
   near(S.bracketTax(157500, NM.mfs), 7312);
 });
 
+test("New Mexico: low- and middle-income exemption, $2,500 per exemption phased out by AGI", () => {
+  // Single, AGI $30,000: $2,500 less 15% of the $10,000 over $20,000, for one exemption.
+  const s = S.compute("NM", earner(30000));
+  const sTaxable = 30000 - 16100 - (2500 - 0.15 * (30000 - 20000));
+  near(s.taxable, sTaxable);
+  near(s.tax, 5500 * 0.015 + (sTaxable - 5500) * 0.032);
+  // Joint with two children, AGI $40,000: $2,500 less 10% of the $10,000 over $30,000, for four exemptions.
+  const j = S.compute("NM", family({ agi: 40000 }));
+  const jTaxable = 40000 - 32200 - 4 * (2500 - 0.1 * (40000 - 30000));
+  near(j.taxable, jTaxable);
+  near(j.tax, jTaxable * 0.015);
+  // Gone at $36,667 single and $55,000 joint, so the test households get none of it.
+  near(S.compute("NM", earner(36667)).taxable, 36667 - 16100);
+  near(S.compute("NM", family({ agi: 55000 })).taxable, 55000 - 32200);
+});
+
 // ---------- Montana ----------
 // HB 337 (2025): 4.7% up to $47,500 ($95,000 joint, $71,250 HOH), 5.65% above, on federal taxable income.
 
@@ -278,6 +294,7 @@ test("North Dakota: schedules reproduce the base tax printed on Form ND-1ES 2026
   near(S.bracketTax(250400, ND.single), 3916.09);
   near(S.bracketTax(304850, ND.mfj), 4329.98);
   near(S.bracketTax(277600, ND.hoh), 4118.40);
+  near(S.bracketTax(152425, ND.mfs), 2164.99);
 });
 
 // ---------- Nebraska ----------
@@ -302,6 +319,13 @@ test("Nebraska: schedules match the 2026 tax table at $79,860 (to the dollar)", 
   const NE = S.get("NE")!.brackets!;
   near(S.bracketTax(79860, NE.single), 3333, 0.5);
   near(S.bracketTax(79860, NE.mfj), 3032, 0.5);
+  near(S.bracketTax(79860, NE.hoh), 3141, 0.5);
+});
+
+test("Nebraska: head-of-household schedule reproduces the base tax printed on the 2026 Form 1040N-ES", () => {
+  const NE = S.get("NE")!.brackets!;
+  near(S.bracketTax(7700, NE.hoh), 189.42);
+  near(S.bracketTax(39620, NE.hoh), 1309.81);
 });
 
 // ---------- Kansas ----------
@@ -365,6 +389,13 @@ test("Minnesota: dependent exemption loses 2% per $2,500 of AGI over $244,500 (s
   near(r.taxable, 250000 - (15300 - 0.03 * (250000 - 244400)) - 5300 * (1 - 0.02 * steps));
 });
 
+test("Minnesota: joint phase-outs at AGI $380,000 (standard deduction and dependent exemptions)", () => {
+  const r = S.compute("MN", family({ agi: 380000 }));
+  const std = 30600 - (0.03 * (337800 - 244400) + 0.1 * (380000 - 337800));
+  const steps = Math.ceil((380000 - 366700) / 2500); // 6
+  near(r.taxable, 380000 - std - 2 * 5300 * (1 - 0.02 * steps));
+});
+
 test("Minnesota Paid Leave: 0.44% employee share, wages capped at $185,000", () => {
   near(S.compute("MN", single()).payroll[0][0].amount, 55000 * 0.0044);
   const fam = S.compute("MN", family());
@@ -384,7 +415,7 @@ test("of the six Plains states, only Montana and North Dakota pass the federal o
   for (const code of ["NM", "NE", "KS", "MN"]) assert.equal(S.get(code)!.overtimeDeduction, false, code);
 });
 
-test("Kansas and Montana are verified; NM, ND, NE and MN still carry the unverified flag", () => {
-  for (const code of ["KS", "MT"]) assert.equal(S.compute(code, single()).unverified, false, code);
-  for (const code of ["NM", "ND", "NE", "MN"]) assert.equal(S.compute(code, single()).unverified, true, code);
+test("of the six Plains states, only New Mexico still carries the unverified flag", () => {
+  for (const code of ["KS", "MT", "MN", "ND", "NE"]) assert.equal(S.compute(code, single()).unverified, false, code);
+  assert.equal(S.compute("NM", single()).unverified, true);
 });

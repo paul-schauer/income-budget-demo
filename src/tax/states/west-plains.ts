@@ -62,6 +62,19 @@ const HI_SINGLE: Brackets = [[9600, 0.014], [14400, 0.032], [19200, 0.055], [240
   [125000, 0.076], [175000, 0.079], [225000, 0.0825], [275000, 0.09], [325000, 0.1], [Infinity, 0.11]];
 const scale = (br: Brackets, k: number): Brackets => br.map(([upper, rate]) => [upper * k, rate]);
 
+// ---------- New Mexico ----------
+// NMSA 7-2-7 as amended by 2024 HB 252, for tax years from 2025; not indexed. HOH uses the joint schedule.
+const NM_JOINT: Brackets = [[8000, 0.015], [25000, 0.032], [50000, 0.043], [100000, 0.047], [315000, 0.049], [Infinity, 0.059]];
+const NM_BRACKETS: Record<FilingStatus, Brackets> = {
+  single: [[5500, 0.015], [16500, 0.032], [33500, 0.043], [66500, 0.047], [210000, 0.049], [Infinity, 0.059]],
+  mfj: NM_JOINT,
+  mfs: [[4000, 0.015], [12500, 0.032], [25000, 0.043], [50000, 0.047], [157500, 0.049], [Infinity, 0.059]],
+  hoh: NM_JOINT,
+};
+// NMSA 7-2-5.8 low- and middle-income exemption: $2,500 for each exemption, less this share of AGI over the
+// threshold, so it's gone at $36,667 single, $55,000 joint/HOH and $27,500 MFS.
+const NM_LMIE: Record<FilingStatus, [number, number]> = { single: [20000, 0.15], mfj: [30000, 0.1], mfs: [15000, 0.2], hoh: [30000, 0.1] };
+
 // ---------- Minnesota ----------
 // 2026 amounts from MN Revenue's December 2025 release and "Tax Year 2026 Inflation-Adjusted Amounts".
 const MN_BRACKETS: Record<FilingStatus, Brackets> = {
@@ -74,9 +87,9 @@ const MN_DEPENDENT_EXEMPTION = 5300;
 // Minn. Stat. 290.0123 subd. 3: the standard deduction shrinks by 3% of AGI between the two thresholds plus
 // 10% of AGI over the second, by at most 80% of the deduction.
 const MN_STD_PHASEOUT: Record<FilingStatus, [number, number]> = { single: [244400, 337800], mfj: [244400, 337800], mfs: [122200, 168900], hoh: [244400, 337800] };
-// Dependent exemptions lose 2 percentage points for each $2,500 ($1,250 MFS), or part of it, of AGI over these.
-// Single and MFS are the 2026 amounts; MFJ and HOH are 2025's, as the 2026 ones aren't confirmed.
-const MN_DEP_PHASEOUT: Record<FilingStatus, number> = { single: 244500, mfj: 358550, mfs: 183350, hoh: 298800 };
+// Minn. Stat. 290.0121 subd. 2: dependent exemptions lose 2 percentage points for each $2,500 ($1,250 MFS), or
+// part of it, of AGI over these 2026 amounts.
+const MN_DEP_PHASEOUT: Record<FilingStatus, number> = { single: 244500, mfj: 366700, mfs: 183350, hoh: 305600 };
 
 // ---------- Kansas ----------
 const KS_SINGLE: Brackets = [[23000, 0.052], [Infinity, 0.0558]];
@@ -213,30 +226,33 @@ export const STATES: StateTable = {
   },
 
   NM: {
-    unverified: true, // exemptions, dependent deduction and bonus rate not confirmed (see docs)
+    unverified: true, // dependent deduction, bonus rate and exemption formula not confirmed officially (see docs)
     code: "NM",
     name: "New Mexico",
     year: 2026,
     kind: "graduated",
-    // NMSA 7-2-7 as amended by 2024 HB 252, for tax years from 2025; not indexed. HOH uses the joint schedule.
-    brackets: {
-      single: [[5500, 0.015], [16500, 0.032], [33500, 0.043], [66500, 0.047], [210000, 0.049], [Infinity, 0.059]],
-      mfj: [[8000, 0.015], [25000, 0.032], [50000, 0.043], [100000, 0.047], [315000, 0.049], [Infinity, 0.059]],
-      mfs: [[4000, 0.015], [12500, 0.032], [25000, 0.043], [50000, 0.047], [157500, 0.049], [Infinity, 0.059]],
-      hoh: [[8000, 0.015], [25000, 0.032], [50000, 0.043], [100000, 0.047], [315000, 0.049], [Infinity, 0.059]],
-    },
+    brackets: NM_BRACKETS,
     startsFrom: "agi",
     standardDeduction: "federal", // New Mexico follows the OBBBA federal standard deduction
     taxes401k: false,
     overtimeDeduction: false, // 2026 HB 264 would have added one; it wasn't enacted
     payroll: [], // the Workers' Compensation fee is $2 a quarter, not a rate; no paid-leave program
     locals: [],
-    notes: ["New Mexico's low- and middle-income exemption and $4,000 dependent deduction aren't included."],
+    // The low- and middle-income exemption, for each filer and dependent.
+    compute(ctx, generic) {
+      const [start, share] = NM_LMIE[ctx.status];
+      const each = Math.max(0, 2500 - share * Math.max(0, num(ctx.agi) - start));
+      if (each <= 0) return generic;
+      const taxable = Math.max(0, generic.taxable - each * (ctx.filers + ctx.dependents));
+      return { taxable, tax: bracketTax(taxable, NM_BRACKETS[ctx.status]) };
+    },
+    notes: ["New Mexico's $4,000 dependent deduction isn't included."],
     sources: [
       "https://www.nmlegis.gov/Sessions/24%20Regular/bills/house/HB0252.HTML",
       "https://www.tax.newmexico.gov/all-nm-taxes/current-historic-tax-rates-overview/personal-income-tax-rates/",
       "https://www.nmlegis.gov/handouts/ZFFSS%20073125%20Item%203%20OBBBA%20Tax%20Presentation.pdf",
       "https://www.nmlegis.gov/Sessions/26%20Regular/AgencyAnalysis/HB0264_333.pdf",
+      "https://law.justia.com/codes/new-mexico/chapter-7/article-2/section-7-2-5-8/",
       "https://www.tax.newmexico.gov/businesses/withholding-tax-and-workers-compensation/",
     ],
   },
@@ -272,12 +288,11 @@ export const STATES: StateTable = {
   },
 
   ND: {
-    unverified: true, // the 2026 married-filing-separately 2.5% threshold isn't confirmed (see docs)
     code: "ND",
     name: "North Dakota",
     year: 2026,
     kind: "graduated",
-    // 2026 schedules from Form ND-1ES 2026. The MFS 2.5% threshold is half the joint one, like its 0% threshold.
+    // 2026 schedules from Form ND-1ES 2026.
     brackets: {
       single: [[49575, 0], [250400, 0.0195], [Infinity, 0.025]],
       mfj: [[82800, 0], [304850, 0.0195], [Infinity, 0.025]],
@@ -301,18 +316,17 @@ export const STATES: StateTable = {
   },
 
   NE: {
-    unverified: true, // the 2026 head-of-household thresholds aren't confirmed (see docs)
     code: "NE",
     name: "Nebraska",
     year: 2026,
     kind: "graduated",
     // LB 754 (2023) rates for 2026: 2.46% / 3.51% / 4.55%. The third and fourth brackets are both 4.55%, so
-    // they're merged. HOH thresholds are the 2025 ones; the 2026 ones aren't confirmed.
+    // they're merged.
     brackets: {
       single: [[4130, 0.0246], [24760, 0.0351], [Infinity, 0.0455]],
       mfj: [[8260, 0.0246], [49520, 0.0351], [Infinity, 0.0455]],
       mfs: [[4130, 0.0246], [24760, 0.0351], [Infinity, 0.0455]],
-      hoh: [[7510, 0.0246], [38590, 0.0351], [Infinity, 0.0455]],
+      hoh: [[7700, 0.0246], [39620, 0.0351], [Infinity, 0.0455]],
     },
     startsFrom: "agi",
     standardDeduction: { single: 8850, mfj: 17700, mfs: 8850, hoh: 12950 },
@@ -327,6 +341,8 @@ export const STATES: StateTable = {
       "https://revenue.nebraska.gov/sites/default/files/doc/research/chronology/4-607table1.pdf",
       "https://revenue.nebraska.gov/sites/default/files/doc/tax-forms/drafts/2026_tax_tables.pdf",
       "https://revenue.nebraska.gov/sites/default/files/doc/tax-forms/drafts/f_1040n-es.pdf",
+      "https://revenue.nebraska.gov/sites/default/files/doc/tax-forms/2025/f_1040N-ES.pdf",
+      "https://revenue.nebraska.gov/about/2026-nebraska-legislative-changes",
       "https://revenue.nebraska.gov/sites/default/files/doc/business/Cir_En_2025/2026cir_en_whole.pdf",
       "https://nebraskalegislature.gov/laws/statutes.php?statute=77-2715.03",
       "https://nebraskalegislature.gov/bills/view_bill.php?DocumentID=63391",
@@ -366,7 +382,6 @@ export const STATES: StateTable = {
   },
 
   MN: {
-    unverified: true, // the 2026 MFJ and HOH dependent-exemption phase-out thresholds aren't confirmed (see docs)
     code: "MN",
     name: "Minnesota",
     year: 2026,
