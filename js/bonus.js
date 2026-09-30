@@ -5,12 +5,29 @@
  * registers with App and renders a compact card. Inputs persist in localStorage
  * (this browser only), not in App state.
  */
-(function (root) {
+(/** @param {typeof globalThis & { Bonus?: import("../types/bonus").BonusApi }} root */ function (root) {
   "use strict";
+  /** @typedef {import("../types/tax").TaxApi} TaxApi */
+  /** @typedef {import("../types/tax").FilingStatus} FilingStatus */
+  /** @typedef {import("../types/app").AppContext} AppContext */
+  /** @typedef {import("../types/app").Income} Income */
+  /** @typedef {import("../types/bonus").BonusApi} BonusApi */
+  /** @typedef {import("../types/bonus").BonusInput} BonusInput */
+  /** @typedef {import("../types/bonus").BonusResult} BonusResult */
+  /** @typedef {import("../types/bonus").OvertimeInput} OvertimeInput */
+  /** @typedef {import("../types/bonus").OvertimeResult} OvertimeResult */
+  /** @typedef {import("../types/bonus").OvertimeTaxKey} OvertimeTaxKey */
+  /** @typedef {import("../types/bonus").OvertimeAmounts} OvertimeAmounts */
+  /** @typedef {import("../types/bonus").HourlyRate} HourlyRate */
+  /** @typedef {import("../types/bonus").BonusPrefs} BonusPrefs */
+  /** @typedef {import("../types/bonus").BonusNumKey} BonusNumKey */
+  /** @typedef {{ minus?: boolean, note?: string, cols?: number, perYear?: number }} RowOptions */
 
   const isNode = typeof module !== "undefined" && module.exports;
+  /** @type {TaxApi} */
   const Tax = isNode ? require("./tax.js") : root.Tax;
 
+  /** @param {unknown} v  a positive number, or 0 */
   function num(v) {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : 0;
@@ -18,12 +35,8 @@
 
   /**
    * What a bonus paid as a separate supplemental-wage check looks like.
-   * @param {object} o
-   * @param {object} o.taxInput     Tax.calculate input for regular pay (annual)
-   * @param {number} o.amount       gross bonus
-   * @param {boolean} [o.apply401k] plan takes the 401(k) % from bonuses (default true)
-   * @param {number} [o.ytdWages]   Social Security / Medicare wages already paid this year
-   * @param {number} [o.priorSupplemental] supplemental wages already paid this year (for the $1M tier)
+   * @param {BonusInput} o  fields are described in types/bonus.d.ts
+   * @returns {BonusResult}
    */
   function bonusEstimate(o) {
     const input = o.taxInput || {};
@@ -52,7 +65,8 @@
     const michigan = base.state.code ? incomeWages * base.state.supplementalRate : 0;
     // Local: wage-based local taxes apply to the whole bonus (401(k) deferrals included);
     // income-based ones (county or city brackets) follow the change in the annual tax.
-    const city = base.local.rate > 0 ? amount * base.local.rate : Math.max(0, after.localTax - base.localTax);
+    const localRate = base.local.rate || 0; // null: no flat local rate
+    const city = localRate > 0 ? amount * localRate : Math.max(0, after.localTax - base.localTax);
     const payroll = Math.max(0, after.payroll - base.payroll); // state SDI / paid leave on the bonus
     const withheld = federal + socialSecurity + medicare + michigan + city + payroll;
     const net = amount - k401 - withheld;
@@ -78,7 +92,11 @@
     };
   }
 
-  /** Hourly rate from the income settings; salary is converted at 2,080 hours a year (an estimate). */
+  /**
+   * Hourly rate from the income settings; salary is converted at 2,080 hours a year (an estimate).
+   * @param {Partial<Income> | null | undefined} income
+   * @returns {HourlyRate}
+   */
   function hourlyRateFor(income) {
     const inc = income || {};
     if (inc.mode === "hourly") return { rate: num(inc.hourlyRate), estimated: false };
@@ -87,12 +105,8 @@
 
   /**
    * Overtime at time-and-a-half, per paycheck and per year, plus the 2026 overtime deduction.
-   * @param {object} o
-   * @param {object} o.taxInput
-   * @param {number} o.perYear            paychecks per year
-   * @param {number} o.hourlyRate
-   * @param {number} o.hoursPerPaycheck
-   * @param {number} [o.multiplier=1.5]
+   * @param {OvertimeInput} o  perYear: paychecks per year; multiplier defaults to 1.5
+   * @returns {OvertimeResult}
    */
   function overtimeEstimate(o) {
     const input = o.taxInput || {};
@@ -100,7 +114,7 @@
     const rate = num(o.hourlyRate);
     const hours = num(o.hoursPerPaycheck);
     const mult = num(o.multiplier) || 1.5;
-    const status = Tax.FEDERAL.standardDeduction[input.filingStatus] != null ? input.filingStatus : "single";
+    const status = isFilingStatus(input.filingStatus) ? input.filingStatus : "single";
 
     const payPerCheck = hours * rate * mult;
     const payAnnual = payPerCheck * perYear;
@@ -111,16 +125,18 @@
     const withOt = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual }));
     const withDeduction = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual, overtimePremium: premiumAnnual }));
 
+    /** @type {OvertimeTaxKey[]} */
     const keys = ["k401", "federal", "socialSecurity", "medicare", "michigan", "city", "payroll"];
-    const annual = {};
+    const annual = /** @type {OvertimeAmounts} */ ({}); // filled in below
     for (const k of keys) annual[k] = withOt[k] - base[k];
     annual.takeHome = (withOt.net + withOt.extraWithholding) - (base.net + base.extraWithholding);
-    const perCheck = {};
-    for (const k of Object.keys(annual)) perCheck[k] = annual[k] / perYear;
+    const perCheck = /** @type {OvertimeAmounts} */ ({});
+    for (const k of /** @type {(keyof OvertimeAmounts)[]} */ (Object.keys(annual))) perCheck[k] = annual[k] / perYear;
 
     const cap = Tax.FEDERAL.overtime.cap[status];
     const deduction = withDeduction.overtimeDeduction;
     const capped = Math.min(premiumAnnual, cap);
+    /** @type {OvertimeResult["limitedBy"]} */
     const limitedBy = status === "mfs" ? "mfs" : deduction < capped - 0.005 ? "phaseout" : premiumAnnual > cap ? "cap" : null;
     const federalSaving = withOt.federal - withDeduction.federal;
     const michiganSaving = withOt.michigan - withDeduction.michigan;
@@ -136,7 +152,20 @@
     };
   }
 
-  /** Rough year-to-date wages from the date: annual wages x share of the year elapsed. */
+  /**
+   * A filing status the federal tables have a standard deduction for.
+   * @param {unknown} s
+   * @returns {s is FilingStatus}
+   */
+  function isFilingStatus(s) {
+    return Tax.FEDERAL.standardDeduction[/** @type {FilingStatus} */ (s)] != null;
+  }
+
+  /**
+   * Rough year-to-date wages from the date: annual wages x share of the year elapsed.
+   * @param {number} annualWages
+   * @param {Date} [date]  default today
+   */
   function ytdEstimate(annualWages, date) {
     const d = date instanceof Date ? date : new Date();
     const y = d.getFullYear();
@@ -145,6 +174,7 @@
     return num(annualWages) * Math.min(1, Math.max(0, dayIndex / days));
   }
 
+  /** @type {BonusApi} */
   const api = { bonusEstimate, overtimeEstimate, hourlyRateFor, ytdEstimate };
   if (isNode) { module.exports = api; return; }
   root.Bonus = api;
@@ -155,16 +185,22 @@
   const App = root.App;
   const { money, usd0, esc, parseNum } = App.util;
   const STORE_KEY = "incomebudget:bonus";
+  /** @type {BonusPrefs} */
   const DEFAULTS = { mode: "bonus", amount: "", ytd: "", apply401k: true, otHours: "" };
+  /** @type {BonusNumKey[]} */
   const NUM_KEYS = ["amount", "ytd", "otHours"];
 
   let prefs = loadPrefs();
+  /** @type {HTMLElement | null} */
   let rootEl = null;
+  /** @type {AppContext | null} */
   let lastCtx = null;
 
+  /** @returns {BonusPrefs} */
   function loadPrefs() {
     const p = Object.assign({}, DEFAULTS);
     try {
+      /** @type {Record<string, unknown> | null} */
       const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
       if (raw && typeof raw === "object") {
         if (raw.mode === "bonus" || raw.mode === "overtime") p.mode = raw.mode;
@@ -179,10 +215,13 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch (_) { /* ignore */ }
   }
 
+  /** @param {BonusNumKey} k */
   const val = (k) => { const n = parseNum(prefs[k]); return Number.isFinite(n) && n > 0 ? n : 0; };
+  /** @param {number} r */
   const pctLabel = (r) => `${+(r * 100).toFixed(2)}%`;
 
   function build() {
+    if (!rootEl) return;
     rootEl.innerHTML = `
       <div class="bonus-head">
         <h2 class="card-title">Bonus &amp; overtime</h2>
@@ -220,12 +259,15 @@
       </div>
       <div id="bonusOut"></div>`;
     for (const k of NUM_KEYS) {
+      /** @type {HTMLInputElement | null} */
       const el = rootEl.querySelector(`[data-b="${k}"]`);
       if (el) el.value = prefs[k];
     }
-    rootEl.querySelector("#bonus401k").checked = prefs.apply401k;
+    /** @type {HTMLInputElement} */ (rootEl.querySelector("#bonus401k")).checked = prefs.apply401k;
 
     rootEl.addEventListener("input", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLInputElement | null} */
       const el = e.target.closest("input[data-b]");
       if (!el || el.type === "checkbox") return;
       const raw = el.value.trim();
@@ -233,25 +275,33 @@
       const bad = raw !== "" && (!Number.isFinite(n) || n < 0 || (el.dataset.b === "otHours" && n > 200));
       el.classList.toggle("invalid", bad);
       if (bad) return;
-      prefs[el.dataset.b] = raw.slice(0, 20);
+      prefs[/** @type {BonusNumKey} */ (el.dataset.b)] = raw.slice(0, 20);
       savePrefs();
       update();
     });
     rootEl.addEventListener("change", (e) => {
-      if (e.target.id !== "bonus401k") return;
+      if (!(e.target instanceof HTMLInputElement) || e.target.id !== "bonus401k") return;
       prefs.apply401k = e.target.checked;
       savePrefs();
       update();
     });
-    rootEl.querySelector("#bonusSeg").addEventListener("click", (e) => {
+    /** @type {HTMLElement} */ (rootEl.querySelector("#bonusSeg")).addEventListener("click", (e) => {
+      if (!(e.target instanceof Element)) return;
+      /** @type {HTMLButtonElement | null} */
       const b = e.target.closest("button[data-bmode]");
       if (!b) return;
-      prefs.mode = b.dataset.bmode;
+      prefs.mode = /** @type {BonusPrefs["mode"]} */ (b.dataset.bmode);
       savePrefs();
       update();
     });
   }
 
+  /**
+   * One table row. label is HTML (escape user text first).
+   * @param {string} label
+   * @param {number} v
+   * @param {RowOptions} [opts]
+   */
   const row = (label, v, { minus = false, note = "", cols = 1, perYear = 1 } = {}) => {
     const cells = cols === 2
       ? `<td class="num">${money(v / perYear)}</td><td class="num">${money(v)}</td>`
@@ -259,6 +309,10 @@
     return `<tr class="${minus ? "minus" : ""}"><td>${label}${note ? `<span class="rate">${note}</span>` : ""}</td>${cells}</tr>`;
   };
 
+  /**
+   * @param {number} balance  withheld minus owed: > 0 comes back as a refund
+   * @param {string} what
+   */
   function verdict(balance, what) {
     if (Math.abs(balance) < 1) return `<p class="bonus-note">Withholding on ${what} is about right; expect little change at tax time.</p>`;
     return balance > 0
@@ -266,15 +320,20 @@
       : `<p class="bonus-note bad">Likely about <b>${money(-balance)}</b> owed at tax time: ${what} is taxed above the withholding rate.</p>`;
   }
 
+  /**
+   * @param {AppContext} ctx
+   * @param {HTMLElement} out
+   */
   function renderBonus(ctx, out) {
+    if (!rootEl) return;
     const income = ctx.state.income;
     const yourPay = ctx.result.people[0];
     const ficaAnnual = yourPay.gross - yourPay.benefits;
     const ytdTyped = String(prefs.ytd).trim() !== "";
     const ytd = ytdTyped ? val("ytd") : ytdEstimate(ficaAnnual);
-    const ytdInput = rootEl.querySelector("#bonusYtd");
+    const ytdInput = /** @type {HTMLInputElement} */ (rootEl.querySelector("#bonusYtd"));
     ytdInput.placeholder = Math.round(ytd).toLocaleString("en-US");
-    rootEl.querySelector("#bonusYtdHint").textContent = ytdTyped
+    /** @type {HTMLElement} */ (rootEl.querySelector("#bonusYtdHint")).textContent = ytdTyped
       ? `Used for the ${usd0.format(Tax.FICA.socialSecurityWageBase)} Social Security wage cap.`
       : `Blank = about ${usd0.format(ytd)}, estimated from today's date. Used for the Social Security wage cap.`;
 
@@ -308,13 +367,18 @@
       <p class="fine">Assumes the bonus is paid on its own check with the IRS 22% flat rate (37% past $1M)${b.stateName ? ` and ${esc(b.stateName)}'s ${pctLabel(b.stateRate)} bonus rate` : ""}. Year end compares that with your ${Math.round(ctx.result.federalMarginal * 100)}% federal bracket plus state and local tax.</p>`;
   }
 
+  /**
+   * @param {AppContext} ctx
+   * @param {HTMLElement} out
+   */
   function renderOvertime(ctx, out) {
+    if (!rootEl) return;
     const income = ctx.state.income;
     const hr = hourlyRateFor(income);
-    rootEl.querySelector("#otRate").innerHTML = hr.rate > 0
+    /** @type {HTMLElement} */ (rootEl.querySelector("#otRate")).innerHTML = hr.rate > 0
       ? `${money(hr.rate * 1.5)}<small>/hr${hr.estimated ? " est." : ""}</small>`
       : "—";
-    rootEl.querySelector("#otHint").textContent = hr.estimated
+    /** @type {HTMLElement} */ (rootEl.querySelector("#otHint")).textContent = hr.estimated
       ? `1.5 × ${money(hr.rate)}/hr, estimated as salary ÷ 2,080 hours. Salaried (exempt) jobs often don't pay overtime.`
       : `1.5 × your ${money(hr.rate)} hourly rate.`;
 
@@ -323,6 +387,7 @@
     if (!hours) { out.innerHTML = `<p class="bonus-note">Enter overtime hours to see the extra take-home.</p>`; return; }
 
     const o = overtimeEstimate({ taxInput: ctx.taxInput, perYear: ctx.perYear, hourlyRate: hr.rate, hoursPerPaycheck: hours });
+    /** @type {(minus: boolean, note?: string) => RowOptions} */
     const opt = (minus, note) => ({ minus, note, cols: 2, perYear: o.perYear });
     const a = o.annual;
     const rows = [
@@ -362,9 +427,9 @@
 
   function update() {
     if (!rootEl || !lastCtx) return;
-    for (const b of rootEl.querySelectorAll("#bonusSeg button")) b.setAttribute("aria-checked", String(b.dataset.bmode === prefs.mode));
-    for (const p of rootEl.querySelectorAll("[data-bpanel]")) p.hidden = p.dataset.bpanel !== prefs.mode;
-    const out = rootEl.querySelector("#bonusOut");
+    for (const b of /** @type {NodeListOf<HTMLButtonElement>} */ (rootEl.querySelectorAll("#bonusSeg button"))) b.setAttribute("aria-checked", String(b.dataset.bmode === prefs.mode));
+    for (const p of /** @type {NodeListOf<HTMLElement>} */ (rootEl.querySelectorAll("[data-bpanel]"))) p.hidden = p.dataset.bpanel !== prefs.mode;
+    const out = /** @type {HTMLElement} */ (rootEl.querySelector("#bonusOut"));
     if (prefs.mode === "overtime") renderOvertime(lastCtx, out);
     else renderBonus(lastCtx, out);
   }
@@ -374,6 +439,7 @@
     if (rootEl) build();
   }
 
+  /** @param {AppContext} ctx */
   function render(ctx) {
     lastCtx = ctx;
     if (!rootEl) init();

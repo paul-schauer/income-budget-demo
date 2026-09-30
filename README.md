@@ -39,6 +39,7 @@ npm install
 npm start        # http://localhost:3000, accounts kept in memory
 npm run dev      # same, but accounts persist to data/dev-db.json
 npm test         # all unit and server tests
+npm run typecheck  # TypeScript checks the JavaScript (JSDoc types, strict mode)
 ```
 
 You can also just open `index.html` in a browser. Everything except sign-in and offline install works that way.
@@ -66,6 +67,10 @@ See `.env.example` for every setting.
 - The server only serves the app's own files: `index.html`, `styles.css`, `sw.js`, the manifest, `js/`, `css/` and `icons/`.
 - A strict Content Security Policy blocks inline scripts.
 - Your budget data is stored as one JSON document per account.
+
+## Types
+
+The code is plain JavaScript with no build step. TypeScript checks it anyway: types are written as JSDoc comments, shared definitions live in `types/*.d.ts`, and `npm run typecheck` runs `tsc` in strict mode over four configs (tax engines, browser UI, server, service worker). CI runs the tests and the type check on every push and pull request.
 
 ## Tax assumptions
 

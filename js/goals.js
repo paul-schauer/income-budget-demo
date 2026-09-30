@@ -13,66 +13,128 @@
  * A schedule is { anchor, payPeriod, today, perYear }: anchor is the user's next payday
  * ("" = Schedule's default), dates are ISO "YYYY-MM-DD". Pass `today` explicitly in tests.
  */
+/**
+ * @typedef {import("../types/app").AppApi} AppApi
+ * @typedef {import("../types/app").AppContext} AppContext
+ * @typedef {import("../types/app").BaseContext} BaseContext
+ * @typedef {import("../types/tax").PayPeriod} PayPeriod
+ * @typedef {import("../types/tax").ScheduleApi} ScheduleApi
+ * @typedef {import("../types/calendar-goals").Goal} Goal
+ * @typedef {import("../types/calendar-goals").GoalInput} GoalInput
+ * @typedef {import("../types/calendar-goals").GoalDraft} GoalDraft
+ * @typedef {import("../types/calendar-goals").GoalMode} GoalMode
+ * @typedef {import("../types/calendar-goals").GoalSchedule} GoalSchedule
+ * @typedef {import("../types/calendar-goals").GoalScheduleInput} GoalScheduleInput
+ * @typedef {import("../types/calendar-goals").GoalPlan} GoalPlan
+ * @typedef {import("../types/calendar-goals").ActiveGoalPlan} ActiveGoalPlan
+ * @typedef {import("../types/calendar-goals").GoalPlanFields} GoalPlanFields
+ * @typedef {import("../types/calendar-goals").GoalSummary} GoalSummary
+ * @typedef {import("../types/calendar-goals").GoalTemplate} GoalTemplate
+ * @typedef {import("../types/calendar-goals").GoalTemplateOptions} GoalTemplateOptions
+ * @typedef {import("../types/calendar-goals").GoalBudgetLine} GoalBudgetLine
+ * @typedef {import("../types/calendar-goals").GoalFormEls} GoalFormEls
+ * @typedef {import("../types/calendar-goals").GoalsApi} GoalsApi
+ * @typedef {"name" | "target" | "saved" | "date" | "per"} GoalField  a form field with an error message
+ */
 (function (root) {
   "use strict";
 
   const isNode = typeof module !== "undefined" && module.exports;
+  /** @type {ScheduleApi} */
   const S = isNode ? require("./schedule.js") : root.Schedule;
 
+  /** @type {GoalMode[]} */
   const MODES = ["date", "amount"];
   const MAX_GOALS = 100;
   const MAX_AMOUNT = 1e9;
   const NAME_MAX = 60;
   const MAX_YEARS = 50; // planning horizon
+  /** @type {Record<PayPeriod, number>} */
   const PER_YEAR = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 };
 
   const uid = () => Math.random().toString(36).slice(2, 10);
+  /** @param {number} n */
   const cents = (n) => Math.round(n * 100);
+  /** @param {number} n */
   const round2 = (n) => Math.round(n * 100) / 100;
+  /**
+   * @param {unknown} v
+   * @returns {v is GoalMode}
+   */
+  const isMode = (v) => MODES.includes(/** @type {GoalMode} */ (v));
+  /**
+   * @param {unknown} v
+   * @returns {v is PayPeriod}
+   */
+  const isPayPeriod = (v) => !!PER_YEAR[/** @type {PayPeriod} */ (v)];
 
   // ---------- Validation ----------
 
-  /** Numbers and numeric strings only; booleans, null, arrays etc. are NaN. */
+  /**
+   * Numbers and numeric strings only; booleans, null, arrays etc. are NaN.
+   * @param {unknown} v
+   * @returns {number}
+   */
   function toNum(v) {
     if (typeof v === "number") return v;
     if (typeof v === "string" && v.trim() !== "") return Number(v.replace(/[$,\s]/g, ""));
     return NaN;
   }
 
-  /** A dollar amount in [0, MAX_AMOUNT], rounded to cents, or `fallback`. */
+  /**
+   * A dollar amount in [0, MAX_AMOUNT], rounded to cents, or `fallback`.
+   * @param {unknown} v
+   * @param {number} fallback
+   */
   function money(v, fallback) {
     const n = toNum(v);
     return Number.isFinite(n) && n >= 0 && n <= MAX_AMOUNT ? round2(n) : fallback;
   }
 
-  /** A real calendar date ("2026-02-31" is not) in a sane range. */
+  /**
+   * A real calendar date ("2026-02-31" is not) in a sane range.
+   * @param {unknown} s
+   * @returns {s is string}
+   */
   function isISODate(s) {
     if (typeof s !== "string") return false;
     const d = S.parse(s);
     return !!d && S.fmt(d) === s && s >= "1900-01-01" && s <= "2200-12-31";
   }
 
-  /** Same day `n` months later, clamped to the month's length. */
+  /**
+   * Same day `n` months later, clamped to the month's length.
+   * @param {string} iso  a valid ISO date
+   * @param {number} n
+   */
   function addMonths(iso, n) {
-    const d = S.parse(iso);
+    const d = /** @type {Date} */ (S.parse(iso));
     const total = d.getUTCMonth() + n;
     const y = d.getUTCFullYear() + Math.floor(total / 12);
     const m = ((total % 12) + 12) % 12;
     return S.onDay(y, m, d.getUTCDate());
   }
 
+  /** @param {unknown} v */
   function cleanName(v) {
     if (typeof v !== "string") return "";
     // eslint-disable-next-line no-control-regex
     return v.replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, NAME_MAX);
   }
 
-  /** Validate goals from storage, import or the server. Anything unusable is dropped. */
+  /**
+   * Validate goals from storage, import or the server. Anything unusable is dropped.
+   * @param {unknown} raw
+   * @returns {Goal[]}
+   */
   function sanitize(raw) {
     if (!Array.isArray(raw)) return [];
+    /** @type {Goal[]} */
     const out = [];
+    /** @type {Set<string>} */
     const seen = new Set();
-    for (const g of raw) {
+    // Entries can be anything; non-objects are skipped below.
+    for (const g of /** @type {(GoalInput | null)[]} */ (raw)) {
       if (out.length >= MAX_GOALS) break;
       if (!g || typeof g !== "object" || Array.isArray(g)) continue;
       const target = money(g.target, NaN);
@@ -84,7 +146,7 @@
 
       const targetDate = isISODate(g.targetDate) ? g.targetDate : "";
       const perPaycheck = money(g.perPaycheck, 0);
-      const mode = MODES.includes(g.mode) ? g.mode : !targetDate && perPaycheck > 0 ? "amount" : "date";
+      const mode = isMode(g.mode) ? g.mode : !targetDate && perPaycheck > 0 ? "amount" : "date";
       out.push({
         id,
         name: cleanName(g.name) || "Savings goal",
@@ -102,9 +164,13 @@
 
   // ---------- Planning ----------
 
+  /**
+   * @param {GoalScheduleInput | null | undefined} s
+   * @returns {GoalSchedule}
+   */
   function normSched(s) {
     s = s || {};
-    const payPeriod = PER_YEAR[s.payPeriod] ? s.payPeriod : "biweekly";
+    const payPeriod = isPayPeriod(s.payPeriod) ? s.payPeriod : "biweekly";
     return {
       anchor: isISODate(s.anchor) ? s.anchor : "",
       payPeriod,
@@ -113,7 +179,12 @@
     };
   }
 
-  /** Paydays from `from` through `to`, inclusive. */
+  /**
+   * Paydays from `from` through `to`, inclusive.
+   * @param {GoalSchedule} s
+   * @param {string} from
+   * @param {string} to
+   */
   function paychecksBetween(s, from, to) {
     const days = S.daysBetween(from, to);
     if (days <= 3650) return S.countPaydays(s.anchor, s.payPeriod, from, to);
@@ -122,10 +193,16 @@
     return S.paydays(s.anchor, s.payPeriod, from, est).filter((d) => d <= to).length;
   }
 
+  /**
+   * @param {Partial<Goal>} goal
+   * @param {GoalSchedule} s
+   * @returns {GoalPlan}  (each return below is a GoalPlan: "active" exactly when the amounts are set)
+   */
   function planWith(goal, s) {
     const target = Number(goal.target) || 0;
     const saved = Number(goal.saved) || 0;
     const remaining = Math.max(0, round2(target - saved));
+    /** @type {GoalPlanFields} */
     const out = {
       status: "active", // active | complete | overdue | unset
       remaining,
@@ -137,39 +214,47 @@
       pastDate: false,
       tooFar: false,
     };
-    if (remaining <= 0) return Object.assign(out, { status: "complete", remaining: 0, progress: 1 });
+    if (remaining <= 0) return /** @type {GoalPlan} */ (Object.assign(out, { status: "complete", remaining: 0, progress: 1 }));
 
     if (goal.mode === "amount") {
       const per = cents(Number(goal.perPaycheck) || 0);
-      if (!(per > 0)) return Object.assign(out, { status: "unset" });
+      if (!(per > 0)) return /** @type {GoalPlan} */ (Object.assign(out, { status: "unset" }));
       const n = Math.ceil(cents(remaining) / per);
       Object.assign(out, { perPaycheck: per / 100, paychecksLeft: n, monthly: ((per / 100) * s.perYear) / 12 });
-      if (n > s.perYear * MAX_YEARS) return Object.assign(out, { tooFar: true });
+      if (n > s.perYear * MAX_YEARS) return /** @type {GoalPlan} */ (Object.assign(out, { tooFar: true }));
       out.finishDate = S.paydays(s.anchor, s.payPeriod, s.today, n)[n - 1];
-      return out;
+      return /** @type {GoalPlan} */ (out);
     }
 
-    if (!isISODate(goal.targetDate)) return Object.assign(out, { status: "unset" });
+    if (!isISODate(goal.targetDate)) return /** @type {GoalPlan} */ (Object.assign(out, { status: "unset" }));
     const pastDate = goal.targetDate < s.today;
     const n = pastDate ? 0 : paychecksBetween(s, s.today, goal.targetDate);
-    if (n === 0) return Object.assign(out, { status: "overdue", pastDate });
+    if (n === 0) return /** @type {GoalPlan} */ (Object.assign(out, { status: "overdue", pastDate }));
     const per = Math.ceil(cents(remaining) / n) / 100; // round up so the last payday gets there
-    return Object.assign(out, { perPaycheck: per, paychecksLeft: n, monthly: (per * s.perYear) / 12 });
+    return /** @type {GoalPlan} */ (Object.assign(out, { perPaycheck: per, paychecksLeft: n, monthly: (per * s.perYear) / 12 }));
   }
 
   /**
    * What a goal needs from each paycheck.
-   * @returns {{status, remaining, progress, perPaycheck, paychecksLeft, monthly, finishDate, pastDate, tooFar}}
-   *   status "complete" (saved >= target), "overdue" (date mode, date passed or no paydays left),
-   *   "unset" (no date / no amount yet) or "active". finishDate is the projected payday (amount mode).
+   * status "complete" (saved >= target), "overdue" (date mode, date passed or no paydays left),
+   * "unset" (no date / no amount yet) or "active". finishDate is the projected payday (amount mode).
+   * @param {Partial<Goal> | null | undefined} goal
+   * @param {GoalScheduleInput | null} [sched]
+   * @returns {GoalPlan}
    */
   function plan(goal, sched) {
     return planWith(goal || {}, normSched(sched));
   }
 
-  /** Totals across goals. perPaycheck counts every active goal; budgeted only those in the budget. */
+  /**
+   * Totals across goals. perPaycheck counts every active goal; budgeted only those in the budget.
+   * @param {Goal[] | null | undefined} goals
+   * @param {GoalScheduleInput | null} [sched]
+   * @returns {GoalSummary}
+   */
   function summarize(goals, sched) {
     const s = normSched(sched);
+    /** @type {GoalSummary} */
     const sum = { saved: 0, target: 0, progress: 0, perPaycheck: 0, budgeted: 0, monthly: 0, counts: { active: 0, complete: 0, overdue: 0, unset: 0 }, plans: new Map() };
     let counted = 0;
     for (const g of goals || []) {
@@ -189,9 +274,15 @@
     return sum;
   }
 
-  /** Budget rows for unfinished, on-schedule goals that are included in the budget. */
+  /**
+   * Budget rows for unfinished, on-schedule goals that are included in the budget.
+   * @param {Goal[] | null | undefined} goals
+   * @param {GoalScheduleInput | null} [sched]
+   * @returns {GoalBudgetLine[]}
+   */
   function budgetLines(goals, sched) {
     const s = normSched(sched);
+    /** @type {GoalBudgetLine[]} */
     const lines = [];
     for (const g of Array.isArray(goals) ? goals : []) {
       if (!g || !g.includeInBudget) continue;
@@ -204,20 +295,32 @@
 
   // ---------- Templates ----------
 
-  /** Three months of budgeted expenses, rounded up to $100; a $1,000 starter fund with no budget. */
+  /**
+   * Three months of budgeted expenses, rounded up to $100; a $1,000 starter fund with no budget.
+   * @param {number} itemsAnnual
+   */
   function emergencyFundTarget(itemsAnnual) {
     const threeMonths = (Number(itemsAnnual) / 12) * 3;
     return Number.isFinite(threeMonths) && threeMonths > 0 ? Math.ceil(threeMonths / 100) * 100 : 1000;
   }
 
-  /** This year's Dec 15, or next year's once it's less than a month away. */
+  /**
+   * This year's Dec 15, or next year's once it's less than a month away.
+   * @param {string} today  a valid ISO date
+   */
   function holidayDate(today) {
-    const y = S.parse(today).getUTCFullYear();
+    const y = /** @type {Date} */ (S.parse(today)).getUTCFullYear();
     const d = `${y}-12-15`;
     return S.daysBetween(today, d) >= 30 ? d : `${y + 1}-12-15`;
   }
 
-  function templates({ itemsAnnual = 0, today } = {}) {
+  /**
+   * Starter goals. `today` is required (addMonths() can't do without it), so the type says so
+   * even though the parameter has a {} default.
+   * @param {GoalTemplateOptions} [opts]
+   * @returns {GoalTemplate[]}
+   */
+  function templates({ itemsAnnual = 0, today } = /** @type {GoalTemplateOptions} */ ({})) {
     const hasBudget = Number(itemsAnnual) > 0;
     return [
       {
@@ -230,6 +333,7 @@
     ];
   }
 
+  /** @type {GoalsApi} */
   const api = {
     MODES, MAX_GOALS, MAX_AMOUNT, MAX_YEARS,
     isISODate, addMonths, sanitize, plan, summarize, budgetLines,
@@ -242,17 +346,35 @@
 
   // ---------- Browser UI ----------
 
+  /** @param {AppApi} App */
   function mountUI(App) {
     const doc = root.document;
     const { esc, money: fmtMoney, pct, parseNum, ICONS } = App.util;
+    /** @param {number} n */
     const whole = (n) => App.util.usd0.format(n);
     const DATE_FMT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-    const fmtDate = (iso) => DATE_FMT.format(S.parse(iso));
+    /** @param {string} iso  a valid ISO date */
+    const fmtDate = (iso) => DATE_FMT.format(/** @type {Date} */ (S.parse(iso)));
+    /**
+     * @param {number} n
+     * @param {string} word
+     */
     const plural = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
+    /** @param {number} n */
     const plain = (n) => (n ? (Number.isInteger(n) ? String(n) : n.toFixed(2)) : "");
-    const byId = (id) => doc.getElementById(id);
+    /**
+     * For elements the tab's skeleton contains (init() checks #goalsRoot itself).
+     * @template {HTMLElement} [E=HTMLElement]
+     * @param {string} id
+     * @returns {E}
+     */
+    const byId = (id) => /** @type {E} */ (doc.getElementById(id));
     const reduceMotion = () => root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    /**
+     * @param {string} d
+     * @param {number} [w]
+     */
     const svg = (d, w = 2) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
     const ICON = {
       plus: svg('<path d="M12 5v14M5 12h14"/>', 2.5),
@@ -260,30 +382,56 @@
       warn: svg('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>'),
     };
 
+    /** @type {HTMLElement | null} */
     let rootEl = null;
+    /** @type {AppContext | null} */
     let lastCtx = null;
+    /**
+     * @type {{ formOpen: boolean, editingId: string | null, mode: GoalMode, addingId: string | null | undefined,
+     *   celebrateId: string | null, focus: { id?: string | null, sel: string } | null }}
+     */
     const ui = { formOpen: false, editingId: null, mode: "date", addingId: null, celebrateId: null, focus: null };
 
     // Only touch the DOM when markup changes, so typing elsewhere doesn't reset focus.
+    /** @type {WeakMap<HTMLElement, string>} */
     const painted = new WeakMap();
+    /**
+     * @param {HTMLElement | null} el
+     * @param {string} html
+     */
     function paint(el, html) {
       if (el && painted.get(el) !== html) { painted.set(el, html); el.innerHTML = html; }
     }
 
+    /** @returns {Goal[]} state.goals (sanitized by this module) */
     const list = () => {
       const st = App.state();
       if (!Array.isArray(st.goals)) st.goals = [];
-      return st.goals;
+      return /** @type {Goal[]} */ (st.goals);
     };
+    /** @param {string | null | undefined} id */
     const find = (id) => list().find((g) => g.id === id) || null;
-    const cardEl = (id) => rootEl.querySelector(`.goal-card[data-id="${CSS.escape(id)}"]`);
+    // rootEl is set by init() before any card exists.
+    /** @param {string} id */
+    const cardEl = (id) => /** @type {HTMLElement} */ (rootEl).querySelector(`.goal-card[data-id="${CSS.escape(id)}"]`);
+    /**
+     * @param {BaseContext} ctx
+     * @returns {GoalSchedule}
+     */
     const schedOf = (ctx) => ({ anchor: ctx.state.income.nextPayday || "", payPeriod: ctx.payPeriod, perYear: ctx.perYear, today: S.todayISO() });
+    /**
+     * @param {string} act
+     * @param {boolean} on
+     * @param {string} label
+     * @param {string} [attrs]
+     */
     const switchHTML = (act, on, label, attrs = "") =>
       `<button type="button" class="goals-switch" role="switch" aria-checked="${on}" data-g="${act}" ${attrs}><span class="goals-switch-track" aria-hidden="true"><span class="goals-switch-knob"></span></span><span>${label}</span></button>`;
 
     // ----- Skeleton (built once; the form is never re-rendered while open) -----
 
     function skeleton() {
+      /** @param {GoalField} key */
       const err = (key) => `<span class="goals-err" id="goalErr-${key}" data-err="${key}" hidden></span>`;
       return `
       <section class="card goals-top" aria-labelledby="goalsTitle">
@@ -346,6 +494,7 @@
 
     // ----- Rendering -----
 
+    /** @param {AppContext} ctx */
     function render(ctx) {
       if (!rootEl) return;
       lastCtx = ctx;
@@ -364,6 +513,11 @@
       restoreFocus();
     }
 
+    /**
+     * @param {AppContext} ctx
+     * @param {GoalSchedule} sched
+     * @param {GoalSummary} sum
+     */
     function summaryHTML(ctx, sched, sum) {
       const takeHome = ctx.result.net / ctx.perYear;
       const c = sum.counts;
@@ -392,6 +546,10 @@
         ${notes.join("")}`;
     }
 
+    /**
+     * @param {AppContext} ctx
+     * @param {GoalSchedule} sched
+     */
     function emptyHTML(ctx, sched) {
       const cards = templates({ itemsAnnual: ctx.itemsAnnual, today: sched.today }).map((t) => {
         const p = plan({ ...t, saved: 0 }, sched);
@@ -409,18 +567,34 @@
       </div>`;
     }
 
+    /**
+     * @param {AppContext} ctx
+     * @param {GoalSchedule} sched
+     */
     function moreHTML(ctx, sched) {
       const chips = templates({ itemsAnnual: ctx.itemsAnnual, today: sched.today })
         .map((t) => `<button type="button" class="goals-chip" data-tpl="${t.key}">${ICON.plus}${esc(t.name)}</button>`).join("");
       return `<div class="goals-more"><span class="goals-more-k">Add from template</span>${chips}</div>`;
     }
 
+    /**
+     * @param {Goal[]} goals
+     * @param {GoalSummary} sum  has a plan for every goal
+     */
     function cardsHTML(goals, sum) {
       // Keep the user's order, with reached goals at the end.
-      const order = [...goals.filter((g) => sum.plans.get(g.id).status !== "complete"), ...goals.filter((g) => sum.plans.get(g.id).status === "complete")];
-      return order.map((g, i) => cardHTML(g, sum.plans.get(g.id), i)).join("");
+      const order = [
+        ...goals.filter((g) => /** @type {GoalPlan} */ (sum.plans.get(g.id)).status !== "complete"),
+        ...goals.filter((g) => /** @type {GoalPlan} */ (sum.plans.get(g.id)).status === "complete"),
+      ];
+      return order.map((g, i) => cardHTML(g, /** @type {GoalPlan} */ (sum.plans.get(g.id)), i)).join("");
     }
 
+    /**
+     * @param {Goal} g
+     * @param {GoalPlan} p
+     * @param {number} i
+     */
     function cardHTML(g, p, i) {
       const name = esc(g.name);
       const done = p.status === "complete";
@@ -432,7 +606,7 @@
 
       let foot = "";
       if (!done && ui.addingId === g.id) {
-        const suggest = p.perPaycheck > 0 ? Math.min(p.perPaycheck, p.remaining) : 0;
+        const suggest = p.perPaycheck !== null && p.perPaycheck > 0 ? Math.min(p.perPaycheck, p.remaining) : 0;
         foot = `<form class="goal-addform" data-g-form="add" novalidate autocomplete="off">
           <label class="sr" for="goalAdd-${i}">Amount to add to ${name}</label>
           <div class="money"><span>$</span><input id="goalAdd-${i}" inputmode="decimal" placeholder="0.00" value="${plain(suggest)}"></div>
@@ -469,6 +643,10 @@
       </article>`;
     }
 
+    /**
+     * @param {Goal} g
+     * @param {GoalPlan} p
+     */
     function planHTML(g, p) {
       const toGo = `${fmtMoney(p.remaining)} to go`;
       switch (p.status) {
@@ -486,7 +664,7 @@
       }
       const meta = `${plural(p.paychecksLeft, "paycheck")}${g.mode === "date" ? " left" : ""} · about ${fmtMoney(p.monthly)} a month · ${toGo}`;
       const need = g.mode === "amount"
-        ? `<span class="goal-k">Done around</span> <span class="goal-big">${fmtDate(p.finishDate)}</span>`
+        ? `<span class="goal-k">Done around</span> <span class="goal-big">${fmtDate(/** @type {string} */ (p.finishDate))}</span>`
         : `<span class="goal-big">${fmtMoney(p.perPaycheck)}</span> <span class="goal-k">per paycheck</span>`;
       return `<div class="goal-plan"><div class="goal-need">${need}</div><div class="goal-meta">${meta}</div></div>`;
     }
@@ -496,7 +674,7 @@
       const { id, sel } = ui.focus;
       ui.focus = null;
       const scope = id ? cardEl(id) : rootEl;
-      const el = scope && scope.querySelector(sel);
+      const el = /** @type {(HTMLElement & { select?: () => void }) | null} */ (scope && scope.querySelector(sel));
       if (el) {
         el.focus();
         if (el.select) el.select();
@@ -505,6 +683,7 @@
 
     // ----- Add / edit form -----
 
+    /** @returns {GoalFormEls} */
     const F = () => ({
       card: byId("goalsFormCard"), form: byId("goalsForm"), title: byId("goalsFormTitle"), submit: byId("goalSubmit"),
       name: byId("goalName"), target: byId("goalTarget"), saved: byId("goalSaved"), date: byId("goalDate"), per: byId("goalPer"),
@@ -512,6 +691,7 @@
     });
     const FIELDS = { name: "name", target: "target", saved: "saved", date: "date", per: "per" };
 
+    /** @param {(GoalDraft & { id?: string }) | null} src  a goal to edit, a template, or null */
     function openForm(src) {
       const f = F();
       const today = S.todayISO();
@@ -536,6 +716,7 @@
       (src && !editing ? f.saved : f.name).focus({ preventScroll: true });
     }
 
+    /** @param {boolean} [restore] */
     function closeForm(restore = true) {
       const id = ui.editingId;
       ui.formOpen = false;
@@ -543,19 +724,21 @@
       F().card.hidden = true;
       if (!restore) return;
       const card = id && cardEl(id);
-      const el = card ? card.querySelector('[data-g="edit"]') : rootEl.querySelector('.goals-head [data-g="new"]');
+      const el = /** @type {HTMLElement | null} */ (card ? card.querySelector('[data-g="edit"]') : /** @type {HTMLElement} */ (rootEl).querySelector('.goals-head [data-g="new"]'));
       if (el) el.focus();
     }
 
     function syncMode() {
       const f = F();
-      for (const b of f.form.querySelectorAll("[data-mode]")) b.setAttribute("aria-checked", String(b.dataset.mode === ui.mode));
-      for (const el of f.form.querySelectorAll("[data-for-mode]")) el.hidden = el.dataset.forMode !== ui.mode;
+      for (const b of /** @type {NodeListOf<HTMLElement>} */ (f.form.querySelectorAll("[data-mode]"))) b.setAttribute("aria-checked", String(b.dataset.mode === ui.mode));
+      for (const el of /** @type {NodeListOf<HTMLElement>} */ (f.form.querySelectorAll("[data-for-mode]"))) el.hidden = el.dataset.forMode !== ui.mode;
     }
 
+    /** @returns {{ goal: GoalDraft, errors: Partial<Record<GoalField, string>> }} */
     function readForm() {
       const f = F();
       const today = S.todayISO();
+      /** @type {Partial<Record<GoalField, string>>} */
       const errors = {};
       const name = cleanName(f.name.value);
       if (!name) errors.name = "Give the goal a name.";
@@ -572,6 +755,7 @@
       const date = f.date.value;
       const per = parseNum(f.per.value);
       const perOk = Number.isFinite(per) && round2(per) > 0 && per <= MAX_AMOUNT;
+      /** @type {GoalDraft} */
       const goal = {
         name, target: round2(target), saved: round2(saved), mode: ui.mode,
         targetDate: isISODate(date) ? date : "",
@@ -592,9 +776,10 @@
       return { goal, errors };
     }
 
+    /** @param {Partial<Record<GoalField, string>>} errors */
     function showErrors(errors) {
       const f = F();
-      for (const key of Object.keys(FIELDS)) {
+      for (const key of /** @type {GoalField[]} */ (Object.keys(FIELDS))) {
         const msg = errors[key] || "";
         f[key].classList.toggle("invalid", !!msg);
         if (msg) f[key].setAttribute("aria-invalid", "true");
@@ -605,6 +790,7 @@
       }
     }
 
+    /** @param {GoalField} key */
     function clearError(key) {
       const f = F();
       if (!f[key]) return;
@@ -624,11 +810,12 @@
       if (!errors.target && !errors.saved) {
         const p = plan(goal, schedOf(lastCtx));
         const takeHome = lastCtx.result.net / lastCtx.perYear;
+        /** @param {ActiveGoalPlan} x */
         const extra = (x) => `about ${fmtMoney(x.monthly)} a month${takeHome > 0 ? `, ${pct(x.perPaycheck / takeHome)} of take-home` : ""}`;
         if (p.status === "complete") html = "You've already saved enough. This goal will show as reached.";
         else if (p.status === "overdue") { warn = true; html = p.pastDate ? "That date has already passed." : "There's no payday before that date."; }
         else if (p.status === "active" && p.tooFar) { warn = true; html = `At that pace it would take more than ${MAX_YEARS} years.`; }
-        else if (p.status === "active" && goal.mode === "amount") html = `You'd reach it around <strong>${fmtDate(p.finishDate)}</strong>, after ${plural(p.paychecksLeft, "paycheck")} (${extra(p)}).`;
+        else if (p.status === "active" && goal.mode === "amount") html = `You'd reach it around <strong>${fmtDate(/** @type {string} */ (p.finishDate))}</strong>, after ${plural(p.paychecksLeft, "paycheck")} (${extra(p)}).`;
         else if (p.status === "active") html = `That's <strong>${fmtMoney(p.perPaycheck)}</strong> from each of your next ${plural(p.paychecksLeft, "paycheck")} (${extra(p)}).`;
       }
       f.preview.classList.toggle("warn", warn);
@@ -638,10 +825,11 @@
     function saveForm() {
       const { goal, errors } = readForm();
       showErrors(errors);
-      const first = Object.keys(errors)[0];
+      const first = /** @type {GoalField | undefined} */ (Object.keys(errors)[0]);
       if (first) { F()[first].focus(); return; }
 
       const existing = ui.editingId && find(ui.editingId);
+      /** @type {string} */
       let id;
       if (existing) {
         const wasDone = existing.saved >= existing.target;
@@ -668,6 +856,7 @@
 
     // ----- Card actions -----
 
+    /** @param {string | null | undefined} id */
     function removeGoal(id) {
       const goals = list();
       const idx = goals.findIndex((g) => g.id === id);
@@ -686,11 +875,12 @@
       });
     }
 
+    /** @param {HTMLFormElement} form  a card's add-money form */
     function addMoney(form) {
-      const card = form.closest(".goal-card");
+      const card = /** @type {HTMLElement | null} */ (form.closest(".goal-card"));
       const goal = card && find(card.dataset.id);
       if (!goal) return;
-      const input = form.querySelector("input");
+      const input = /** @type {HTMLInputElement} */ (form.querySelector("input"));
       const amt = round2(parseNum(input.value));
       if (!Number.isFinite(amt) || amt === 0 || Math.abs(amt) > MAX_AMOUNT) {
         input.classList.add("invalid");
@@ -713,6 +903,10 @@
       });
     }
 
+    /**
+     * @param {string | undefined} key
+     * @returns {GoalDraft | undefined}
+     */
     function templateGoal(key) {
       const ctx = lastCtx || App.context();
       const t = templates({ itemsAnnual: ctx.itemsAnnual, today: S.todayISO() }).find((x) => x.key === key);
@@ -721,11 +915,13 @@
 
     // ----- Events -----
 
+    /** @param {MouseEvent} e */
     function onClick(e) {
-      const tpl = e.target.closest("[data-tpl]");
+      if (!(e.target instanceof Element)) return;
+      const tpl = /** @type {HTMLElement | null} */ (e.target.closest("[data-tpl]"));
       if (tpl) { const t = templateGoal(tpl.dataset.tpl); if (t) openForm(t); return; }
 
-      const modeBtn = e.target.closest("#goalsForm [data-mode]");
+      const modeBtn = /** @type {HTMLElement | null} */ (e.target.closest("#goalsForm [data-mode]"));
       if (modeBtn) {
         ui.mode = modeBtn.dataset.mode === "amount" ? "amount" : "date";
         clearError("date");
@@ -735,9 +931,9 @@
         return;
       }
 
-      const btn = e.target.closest("[data-g]");
+      const btn = /** @type {HTMLElement | null} */ (e.target.closest("[data-g]"));
       if (!btn) return;
-      const card = btn.closest(".goal-card");
+      const card = /** @type {HTMLElement | null} */ (btn.closest(".goal-card"));
       const id = card && card.dataset.id;
       switch (btn.dataset.g) {
         case "new": openForm(null); break;
@@ -768,16 +964,20 @@
       }
     }
 
+    /** @param {SubmitEvent} e */
     function onSubmit(e) {
       const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
       if (form.id === "goalsForm") { e.preventDefault(); saveForm(); }
       else if (form.dataset.gForm === "add") { e.preventDefault(); addMoney(form); }
     }
 
+    /** @param {Event} e */
     function onInput(e) {
       const el = e.target;
+      if (!(el instanceof Element)) return;
       if (el.closest("#goalsForm")) {
-        const key = Object.keys(FIELDS).find((k) => F()[k] === el);
+        const key = /** @type {GoalField[]} */ (Object.keys(FIELDS)).find((k) => F()[k] === el);
         if (key) clearError(key);
         updatePreview();
       } else if (el.closest(".goal-addform")) {
@@ -785,18 +985,20 @@
       }
     }
 
+    /** @param {KeyboardEvent} e */
     function onKeydown(e) {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || !(e.target instanceof Element)) return;
       if (e.target.closest("#goalsForm")) { e.preventDefault(); closeForm(); }
       else if (e.target.closest(".goal-addform")) {
         e.preventDefault();
-        const id = e.target.closest(".goal-card").dataset.id;
+        const id = /** @type {HTMLElement} */ (e.target.closest(".goal-card")).dataset.id;
         ui.addingId = null;
         ui.focus = { id, sel: '[data-g="add"]' };
         App.render();
       }
     }
 
+    /** @param {AppContext} ctx */
     function init(ctx) {
       rootEl = byId("goalsRoot");
       if (!rootEl) return;
@@ -808,14 +1010,15 @@
       rootEl.addEventListener("keydown", onKeydown);
     }
 
-    App.register({
+    App.register(/** @satisfies {import("../types/app").AppModule<Goal[]>} */ ({
       id: "goals",
       stateKey: "goals",
       defaults: () => [],
       sanitize,
       init,
       render,
-      budgetLines: (ctx) => budgetLines(ctx.state.goals, schedOf(ctx)),
-    });
+      // App runs state.goals through this module's sanitize().
+      budgetLines: (ctx) => budgetLines(/** @type {Goal[]} */ (ctx.state.goals), schedOf(ctx)),
+    }));
   }
 })(typeof window !== "undefined" ? window : globalThis);

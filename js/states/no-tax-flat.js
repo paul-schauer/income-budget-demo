@@ -3,9 +3,11 @@
  * Schema: see STATE_SCHEMA in js/state-tax.js. Sources and a confidence flag for each figure are in
  * docs/state-tax-sources/no-tax-flat.md.
  */
+/** @typedef {import("../../types/tax").StateEntry} StateEntry */
 (function (root) {
   "use strict";
 
+  /** @param {unknown} v */
   const n = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
 
   // 2026 Social Security wage base; WA PFML, CO FAMLI and MA PFML premiums stop at it.
@@ -13,11 +15,16 @@
 
   const TAX_FOUNDATION_2026 = "https://taxfoundation.org/data/all/state/state-income-tax-rates-2026/";
 
-  /** A state with no tax on wages. */
+  /**
+   * A state with no tax on wages.
+   * @param {string} code @param {string} name @param {Partial<StateEntry>} [extra]
+   * @returns {StateEntry}
+   */
   const noTax = (code, name, extra = {}) => ({
     code, name, year: 2026, kind: "none", payroll: [], locals: [], notes: [], sources: [TAX_FOUNDATION_2026], ...extra,
   });
 
+  /** @type {import("../../types/tax").StateTable} */
   const STATES = {
     // ---------------- No income tax on wages ----------------
     AK: noTax("AK", "Alaska", {
@@ -448,4 +455,4 @@
 
   if (typeof module !== "undefined" && module.exports) module.exports = STATES;
   else root.StateTax.register(STATES);
-})(typeof window !== "undefined" ? window : globalThis);
+})(/** @type {Window & typeof globalThis} */ (typeof window !== "undefined" ? window : globalThis));

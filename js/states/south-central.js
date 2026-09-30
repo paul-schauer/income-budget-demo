@@ -6,11 +6,18 @@
  * Entries with a compute() override keep headline amounts in the plain fields (for example the
  * standard deduction before its phase-out) and apply the full rule in compute().
  */
+/**
+ * @typedef {import("../../types/tax").Brackets} Brackets
+ * @typedef {import("../../types/tax").FilingStatus} FilingStatus
+ * @typedef {import("../../types/tax").StateComputeContext} StateComputeContext
+ */
 (function (root) {
   "use strict";
 
+  /** @param {unknown} v */
   const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
 
+  /** @param {number} taxable @param {Brackets} brackets */
   function bracketTax(taxable, brackets) {
     let tax = 0;
     let lower = 0;
@@ -22,16 +29,27 @@
     return tax;
   }
 
+  /**
+   * @template T
+   * @param {T} single @param {T} mfj @param {T} [mfs] @param {T} [hoh]
+   * @returns {Record<FilingStatus, T>}
+   */
   const byStatus = (single, mfj, mfs = single, hoh = single) => ({ single, mfj, mfs, hoh });
 
-  /** Earned income of the first two earners: wages less traditional 401(k). */
+  /**
+   * Earned income of the first two earners: wages less traditional 401(k).
+   * @param {StateComputeContext} ctx
+   */
   function earned(ctx) {
     const e = (ctx.earners || []).slice(0, 2).map((x) => Math.max(0, num(x.wages) - num(x.k401Trad)));
     while (e.length < 2) e.push(0);
     return e;
   }
 
-  /** Each spouse's share of the household's state income, split in proportion to earned income. */
+  /**
+   * Each spouse's share of the household's state income, split in proportion to earned income.
+   * @param {StateComputeContext} ctx
+   */
   function spouseShares(ctx) {
     const [a, b] = earned(ctx);
     const base = num(ctx.base);
@@ -40,6 +58,7 @@
   }
 
   // ---------- Alabama ----------
+  /** @type {Record<FilingStatus, Brackets>} */
   const AL_BRACKETS = byStatus([[500, 0.02], [3000, 0.04], [Infinity, 0.05]], [[1000, 0.02], [6000, 0.04], [Infinity, 0.05]]);
   // Code of Ala. 40-18-15(b): the maximum applies below the AGI threshold, then drops by `cut` for each
   // full `step` of AGI above it, down to a floor.
@@ -49,18 +68,23 @@
     mfs: { max: 4250, min: 2500, start: 12750, step: 250, cut: 88 },
     hoh: { max: 5200, min: 2500, start: 25500, step: 500, cut: 135 },
   };
+  /** @param {number} agi @param {FilingStatus} status */
   function alStandardDeduction(agi, status) {
     const p = AL_STD[status];
     const steps = Math.max(0, Math.floor((agi - p.start) / p.step));
     return Math.max(p.min, p.max - steps * p.cut);
   }
+  /** @param {number} agi */
   const alDependentExemption = (agi) => (agi <= 50000 ? 1000 : agi <= 100000 ? 500 : 300);
 
   // ---------- Arkansas (Act 1 of 2026, 1st Extraordinary Session) ----------
+  /** @type {Brackets} */
   const AR_STANDARD_TABLE = [[5600, 0], [11200, 0.02], [16000, 0.03], [26400, 0.034], [Infinity, 0.037]];
+  /** @type {Brackets} */
   const AR_UPPER_TABLE = [[4700, 0.02], [Infinity, 0.037]];
   const AR_UPPER_START = 94700;
   const AR_STD_EACH = 2470;
+  /** @param {number} netIncome */
   function arTableTax(netIncome) {
     if (netIncome <= AR_UPPER_START) return bracketTax(netIncome, AR_STANDARD_TABLE);
     // Bracket adjustment: $290 just above the threshold, $10 less per $100, gone at $97,600.
@@ -69,15 +93,20 @@
   }
 
   // ---------- Missouri ----------
+  /** @type {Brackets} */
   const MO_BRACKETS = [[1348, 0], [2696, 0.02], [4044, 0.025], [5392, 0.03], [6740, 0.035], [8088, 0.04], [9436, 0.045], [Infinity, 0.047]];
   // Share of federal income tax that is deductible, by Missouri AGI (RSMo 143.171).
+  /** @param {number} agi */
   const moFederalTaxShare = (agi) => (agi <= 25000 ? 0.35 : agi <= 50000 ? 0.25 : agi <= 100000 ? 0.15 : agi <= 125000 ? 0.05 : 0);
 
   // ---------- Oklahoma (HB 2764 of 2025) ----------
+  /** @type {Brackets} */
   const OK_SINGLE = [[3750, 0], [4900, 0.025], [7200, 0.035], [Infinity, 0.045]];
+  /** @type {Brackets} */
   const OK_JOINT = [[7500, 0], [9800, 0.025], [14400, 0.035], [Infinity, 0.045]];
 
   // ---------- South Carolina (H.4216, Act 110 of 2026) ----------
+  /** @type {Brackets} */
   const SC_BRACKETS = [[30000, 0.0199], [Infinity, 0.0521]];
   // SC Income Adjusted Deduction: base amount, reduced by the fraction (AGI - start) / width.
   const SC_SCIAD = {
@@ -89,13 +118,17 @@
   const SC_DEPENDENT_EXEMPTION = 4930; // 2025 amount; the 2026 indexed amount isn't published yet
 
   // ---------- Virginia ----------
+  /** @type {Brackets} */
   const VA_BRACKETS = [[3000, 0.02], [5000, 0.03], [17000, 0.05], [Infinity, 0.0575]];
 
   // ---------- West Virginia (SB 392 of 2026) ----------
+  /** @type {Brackets} */
   const WV_BRACKETS = [[10000, 0.0211], [25000, 0.0281], [40000, 0.0316], [60000, 0.0422], [Infinity, 0.0458]];
+  /** @type {Brackets} */
   const WV_MFS = [[5000, 0.0211], [12500, 0.0281], [20000, 0.0316], [30000, 0.0422], [Infinity, 0.0458]];
 
   // ---------- Wisconsin ----------
+  /** @type {Record<FilingStatus, Brackets>} */
   const WI_BRACKETS = byStatus(
     [[15110, 0.035], [51950, 0.044], [332720, 0.053], [Infinity, 0.0765]],
     [[20150, 0.035], [69260, 0.044], [443630, 0.053], [Infinity, 0.0765]],
@@ -108,7 +141,9 @@
     mfs: { max: 11930, start: 13390, rate: 0.19778 },
     hoh: { max: 17520, start: 19550, rate: 0.22515 },
   };
+  /** @param {number} agi @param {FilingStatus} status */
   function wiStandardDeduction(agi, status) {
+    /** @param {{ max: number, start: number, rate: number }} p */
     const line = (p) => Math.max(0, p.max - p.rate * Math.max(0, agi - p.start));
     // Head of household phases out faster until it meets the single amount, then follows it.
     if (status === "hoh") return Math.max(line(WI_STD.hoh), line(WI_STD.single));
@@ -122,6 +157,7 @@
   // ---------- Mississippi (HB 1 of 2025) ----------
   const MS_ZERO_BAND = 10000;
   const MS_RATE = 0.04;
+  /** @type {Brackets} */
   const MS_BRACKETS = [[MS_ZERO_BAND, 0], [Infinity, MS_RATE]];
   const MS_EXEMPTION = byStatus(6000, 12000, 6000, 8000);
 
@@ -134,11 +170,13 @@
     [20000, 30000, 40000, 50000, 60000, 70000],
     [30000, 45000, 60000, 75000, 90000, 105000],
   );
+  /** @param {number} agi @param {FilingStatus} status */
   function ncChildDeduction(agi, status) {
     const i = NC_CHILD_STEPS[status].findIndex((upper) => agi <= upper);
     return i === -1 ? 0 : 3000 - 500 * i;
   }
 
+  /** @type {import("../../types/tax").StateTable} */
   const STATES = {
     AL: {
       code: "AL",
@@ -514,4 +552,4 @@
 
   if (typeof module !== "undefined" && module.exports) module.exports = STATES;
   else root.StateTax.register(STATES);
-})(typeof window !== "undefined" ? window : globalThis);
+})(/** @type {Window & typeof globalThis} */ (typeof window !== "undefined" ? window : globalThis));

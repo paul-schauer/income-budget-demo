@@ -8,57 +8,86 @@
 
   const DAY = 86400000;
 
+  /**
+   * @param {string | null | undefined} iso
+   * @returns {Date | null}
+   */
   function parse(iso) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
     return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12)) : null;
   }
 
+  /**
+   * parse() for dates that must be valid: throws on a malformed date.
+   * @param {string} iso
+   * @returns {Date}
+   */
+  function req(iso) {
+    const d = parse(iso);
+    if (!d) throw new TypeError(`Not an ISO date: ${iso}`);
+    return d;
+  }
+
+  /** @param {Date} d */
   function fmt(d) {
     return d.toISOString().slice(0, 10);
   }
 
+  /** @param {string} iso @param {number} n */
   function addDays(iso, n) {
-    return fmt(new Date(parse(iso).getTime() + n * DAY));
+    return fmt(new Date(req(iso).getTime() + n * DAY));
   }
 
+  /** @param {string} aIso @param {string} bIso */
   function daysBetween(aIso, bIso) {
-    return Math.round((parse(bIso) - parse(aIso)) / DAY);
+    return Math.round((req(bIso).getTime() - req(aIso).getTime()) / DAY);
   }
 
+  /** @param {Date} [now] */
   function todayISO(now = new Date()) {
     return fmt(new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12)));
   }
 
+  /** @param {number} y @param {number} m 0-based month */
   function daysInMonth(y, m) {
     return new Date(Date.UTC(y, m + 1, 0, 12)).getUTCDate();
   }
 
-  /** Date in month (y, m) on `day`, clamped to the month's length. */
+  /**
+   * Date in month (y, m) on `day`, clamped to the month's length.
+   * @param {number} y @param {number} m @param {number} day
+   */
   function onDay(y, m, day) {
     return fmt(new Date(Date.UTC(y, m, Math.min(day, daysInMonth(y, m)), 12)));
   }
 
-  /** Move Saturday/Sunday back to Friday, as most payroll does. */
+  /**
+   * Move Saturday/Sunday back to Friday, as most payroll does.
+   * @param {string} iso
+   */
   function prevBusinessDay(iso) {
-    const dow = parse(iso).getUTCDay();
+    const dow = req(iso).getUTCDay();
     return dow === 6 ? addDays(iso, -1) : dow === 0 ? addDays(iso, -2) : iso;
   }
 
+  /** @param {string} fromIso */
   function nextFriday(fromIso) {
-    const dow = parse(fromIso).getUTCDay();
+    const dow = req(fromIso).getUTCDay();
     return addDays(fromIso, (5 - dow + 7) % 7);
   }
 
   /**
    * Upcoming paydays on or after `fromIso`.
-   * @param {string} anchorIso  a known payday ("" = sensible default)
+   * @param {string | null | undefined} anchorIso  a known payday ("" = sensible default)
    * @param {string} payPeriod  weekly | biweekly | semimonthly | monthly
    * @param {string} fromIso
    * @param {number} count
+   * @returns {string[]}
    */
   function paydays(anchorIso, payPeriod, fromIso, count) {
+    /** @type {string[]} */
     const out = [];
-    const anchor = parse(anchorIso) ? anchorIso : null;
+    const anchor = anchorIso && parse(anchorIso) ? anchorIso : null;
 
     if (payPeriod === "weekly" || payPeriod === "biweekly") {
       const step = payPeriod === "weekly" ? 7 : 14;
@@ -71,10 +100,10 @@
     }
 
     // Monthly and semimonthly are calendar-based.
-    const from = parse(fromIso);
+    const from = req(fromIso);
     let y = from.getUTCFullYear();
     let m = from.getUTCMonth();
-    const anchorDay = anchor ? parse(anchor).getUTCDate() : null;
+    const anchorDay = anchor ? req(anchor).getUTCDate() : null;
     // Semimonthly: 15th and last day. Monthly: anchor's day of month, else last day.
     const days = payPeriod === "semimonthly" ? [15, 31] : [anchorDay || 31];
     while (out.length < count) {
@@ -87,7 +116,10 @@
     return out;
   }
 
-  /** Number of paydays from `fromIso` (inclusive) up to `toIso` (inclusive). */
+  /**
+   * Number of paydays from `fromIso` (inclusive) up to `toIso` (inclusive).
+   * @param {string | null | undefined} anchorIso @param {string} payPeriod @param {string} fromIso @param {string} toIso
+   */
   function countPaydays(anchorIso, payPeriod, fromIso, toIso) {
     if (!parse(toIso) || toIso < fromIso) return 0;
     let n = 0;
@@ -96,8 +128,9 @@
     return n;
   }
 
+  /** @type {import("../types/tax").ScheduleApi} */
   const api = { parse, fmt, addDays, daysBetween, todayISO, daysInMonth, onDay, prevBusinessDay, paydays, countPaydays };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Schedule = api;
-})(typeof window !== "undefined" ? window : globalThis);
+})(/** @type {Window & typeof globalThis} */ (typeof window !== "undefined" ? window : globalThis));
