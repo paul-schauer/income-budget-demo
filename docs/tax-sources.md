@@ -1,6 +1,6 @@
 # 2026 tax figures and sources
 
-Every number in `js/tax.js` and where it came from. Checked 2026-09-30.
+Every number in `src/tax/tax.ts` and where it came from. Checked 2026-09-30.
 
 **How these were checked.** The sandbox's network proxy blocked direct page fetches, including irs.gov, michigan.gov, ssa.gov and the city sites. Every figure was instead confirmed through web-search excerpts of the official page listed next to it, and the search had to show the exact number. Figures marked **(secondary)** came from an official source that isn't the issuing agency itself (for example, Grand Rapids' table of other cities) or from an older form, and could not be confirmed from the issuing agency's current page.
 

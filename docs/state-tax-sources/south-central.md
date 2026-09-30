@@ -1,6 +1,6 @@
 # South and Central states: 2026 figures and sources
 
-Figures in `js/states/south-central.js`, tested by `test/states-south-central.test.js`. Checked 2026-09-30.
+Figures in `src/tax/states/south-central.ts`, tested by `test/states-south-central.test.ts`. Checked 2026-09-30.
 
 States: Alabama, Arkansas, Kentucky, Louisiana, Mississippi, Missouri, North Carolina, Oklahoma, South Carolina, Virginia, West Virginia, Wisconsin.
 

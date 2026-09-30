@@ -1,6 +1,6 @@
 # Northeast and Mid-Atlantic: 2026 state tax figures and sources
 
-Every figure in `js/states/northeast.js` and where it came from. Checked 2026-09-30.
+Every figure in `src/tax/states/northeast.ts` and where it came from. Checked 2026-09-30.
 
 **How these were checked.** The sandbox's network proxy blocked every state website (tax.ny.gov, nj.gov, portal.ct.gov, tax.ri.gov, tax.vermont.gov, maine.gov, delaware.gov, marylandcomptroller.gov, otr.cfo.dc.gov), so no official page could be opened directly. Figures were checked two ways:
 
