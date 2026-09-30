@@ -1,11 +1,14 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const S = require("../js/spending.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import * as S from "../src/app/spending";
+import type { BudgetItem } from "../src/app/types";
+import type { ColumnMapping, ImportOptions, ParsedImportRow, Transaction } from "../src/app/spending.types";
 
-const fixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", `spending-${name}.csv`), "utf8");
+const fixture = (name: string) => fs.readFileSync(path.join(import.meta.dirname, "fixtures", `spending-${name}.csv`), "utf8");
 
+// Test items leave out fields the spending logic never reads (dueDay).
 const ITEMS = [
   { id: "rent", name: "Rent", amount: 1250, recurrence: "monthly", category: "housing" },
   { id: "groc", name: "Groceries", amount: 110, recurrence: "weekly", category: "food" },
@@ -13,7 +16,7 @@ const ITEMS = [
   { id: "netflix", name: "Netflix", amount: 15.49, recurrence: "monthly", category: "subscriptions" },
   { id: "dte", name: "DTE Energy", amount: 130, recurrence: "monthly", category: "utilities" },
   { id: "ins", name: "Car insurance", amount: 720, recurrence: "annual", category: "transport" },
-];
+] as BudgetItem[];
 const CATS = [
   { id: "housing", name: "Housing" }, { id: "transport", name: "Transportation" }, { id: "food", name: "Food" },
   { id: "utilities", name: "Utilities" }, { id: "subscriptions", name: "Subscriptions" }, { id: "other", name: "Other" },
@@ -78,7 +81,7 @@ test("detectDateOrder switches to day-first only when the data demands it", () =
 });
 
 test("parseAmount handles currency, thousands, parentheses and trailing minus", () => {
-  const cases = [
+  const cases: [string, number][] = [
     ["-54.23", -54.23], ["54.23", 54.23], ["$1,234.56", 1234.56], ["-$1,234.56", -1234.56], ["$-12.00", -12],
     ["(12.50)", -12.5], ["($1,250.00)", -1250], ["12.50-", -12.5], ["+7", 7], ["-76.4000", -76.4],
     ["1.234,56", 1234.56], ["-54,23", -54.23], ["1,234", 1234], [" 3 ", 3], ["−10.00", -10], ["USD 5.00", 5], [".5", 0.5],
@@ -90,7 +93,7 @@ test("parseAmount handles currency, thousands, parentheses and trailing minus", 
 // ---------- Column detection ----------
 
 test("detectColumns finds each bank's columns by header name", () => {
-  const cols = (line) => S.detectColumns(S.parseCSV(line)[0]);
+  const cols = (line: string) => S.detectColumns(S.parseCSV(line)[0]);
   assert.deepEqual(cols("Transaction Date,Post Date,Description,Category,Type,Amount,Memo"),
     { date: 0, description: 2, amount: 5, debit: -1, credit: -1, type: 4 });
   assert.deepEqual(cols("Details,Posting Date,Description,Amount,Type,Balance,Check or Slip #"),
@@ -117,7 +120,7 @@ test("detectColumns never uses balance, card or account columns as amounts", () 
 
 test("findHeader skips a Bank of America summary preamble", () => {
   const rows = S.parseCSV(fixture("bofa-checking"));
-  const h = S.findHeader(rows);
+  const h = S.findHeader(rows)!;
   assert.equal(rows[h.index].join(","), "Date,Description,Amount,Running Bal.");
   assert.deepEqual(h.mapping, { date: 0, description: 1, amount: 2, debit: -1, credit: -1, type: -1 });
 });
@@ -141,7 +144,7 @@ test("header-less exports (Wells Fargo style) get columns guessed from the data"
 
 // ---------- Sign handling per bank ----------
 
-const importFixture = (name, opts = {}) => S.prepareImport(fixture(name), { items: ITEMS, ...opts });
+const importFixture = (name: string, opts: ImportOptions = {}) => S.prepareImport(fixture(name), { items: ITEMS, ...opts });
 
 test("Chase credit card: negatives are purchases, payments skipped, returns kept as refunds", () => {
   const r = importFixture("chase-credit");
@@ -150,7 +153,7 @@ test("Chase credit card: negatives are purchases, payments skipped, returns kept
   assert.deepEqual(r.counts, { rows: 12, new: 11, duplicate: 0, income: 1, invalid: 0, refunds: 1 });
   const byDesc = Object.fromEntries(r.transactions.map((t) => [t.description, t]));
   assert.equal(byDesc["STARBUCKS STORE 12345"].amount, 6.45);
-  assert.equal(r.transactions.find((t) => t.amount < 0).amount, -25.99); // TARGET return
+  assert.equal(r.transactions.find((t) => t.amount < 0)!.amount, -25.99); // TARGET return
   assert.ok(!r.transactions.some((t) => /Payment Thank You/.test(t.description)));
   assert.equal(byDesc['DTE ENERGY, BILL PAY'].itemId, "dte"); // quoted field with a comma; name match
   assert.equal(byDesc["NETFLIX.COM"].itemId, "netflix");
@@ -163,10 +166,10 @@ test("Chase checking: payroll and Zelle-in skipped, store refund kept, trailing 
   assert.equal(r.signMode, "negative");
   assert.equal(r.counts.income, 2);
   assert.equal(r.counts.new, 7);
-  const refund = r.transactions.find((t) => t.amount < 0);
+  const refund = r.transactions.find((t) => t.amount < 0)!;
   assert.equal(refund.amount, -12.99);
   assert.match(refund.description, /^KROGER/);
-  assert.equal(r.transactions.find((t) => /CHECK 1042/.test(t.description)).amount, 1250);
+  assert.equal(r.transactions.find((t) => /CHECK 1042/.test(t.description))!.amount, 1250);
   // padded fixed-width descriptions are collapsed
   assert.equal(r.transactions[0].description, "KROGER #123 ANN ARBOR MI 09/28");
 });
@@ -175,8 +178,8 @@ test("Bank of America checking: preamble and balance line ignored, deposits skip
   const r = importFixture("bofa-checking");
   assert.equal(r.signMode, "negative");
   assert.deepEqual(r.counts, { rows: 9, new: 7, duplicate: 0, income: 2, invalid: 0, refunds: 0 });
-  assert.equal(r.transactions.find((t) => /RENT PAYMENT/.test(t.description)).amount, 1250);
-  assert.equal(r.transactions.find((t) => /RENT PAYMENT/.test(t.description)).itemId, "rent");
+  assert.equal(r.transactions.find((t) => /RENT PAYMENT/.test(t.description))!.amount, 1250);
+  assert.equal(r.transactions.find((t) => /RENT PAYMENT/.test(t.description))!.itemId, "rent");
   assert.ok(r.transactions.every((t) => t.amount > 0));
 });
 
@@ -187,7 +190,7 @@ test("Capital One card: Debit/Credit columns; card payment skipped, Amazon credi
   assert.equal(r.counts.refunds, 1);
   const amazon = r.transactions.filter((t) => /AMAZON/.test(t.description)).map((t) => t.amount).sort();
   assert.deepEqual(amazon, [-23.1, 23.1]);
-  assert.equal(r.transactions.find((t) => /KROGER/.test(t.description)).amount, 54.23);
+  assert.equal(r.transactions.find((t) => /KROGER/.test(t.description))!.amount, 54.23);
 });
 
 test("Capital One 360: unsigned amounts use the Debit/Credit type column", () => {
@@ -204,9 +207,9 @@ test("Michigan credit union (signed Amount, 4 decimals, Effective Date)", () => 
   assert.equal(r.mapping.date, 2); // Effective Date: when you actually bought it
   assert.equal(r.mapping.description, 7);
   assert.equal(r.counts.income, 2); // payroll + dividend
-  const meijer = r.transactions.find((t) => /MEIJER/.test(t.description));
+  const meijer = r.transactions.find((t) => /MEIJER/.test(t.description))!;
   assert.deepEqual([meijer.date, meijer.amount], ["2026-09-28", 76.4]);
-  assert.equal(r.transactions.find((t) => t.description === "DTE ENERGY").itemId, "dte");
+  assert.equal(r.transactions.find((t) => t.description === "DTE ENERGY")!.itemId, "dte");
 });
 
 test("Michigan credit union (Withdrawal/Deposit, $ amounts, M/D/YY)", () => {
@@ -264,7 +267,8 @@ test("mapping and sign overrides from the preview dropdowns are applied", () => 
   assert.equal(flipped.counts.income, 2);
   const ignored = S.prepareImport(csv, { mapping: { date: 0, description: 1, amount: 2 }, signMode: "debitcredit" });
   assert.equal(ignored.signMode, "positive"); // incompatible override falls back to detection
-  const outOfRange = S.prepareImport(csv, { mapping: { date: 9, description: "x", amount: 2 } });
+  // a non-numeric override, as a tampered dropdown could send
+  const outOfRange = S.prepareImport(csv, { mapping: { date: 9, description: "x", amount: 2 } as unknown as Partial<ColumnMapping> });
   assert.equal(outOfRange.mapping.date, 0); // bad overrides are ignored; detection stays
   assert.equal(outOfRange.mapping.description, 1);
 });
@@ -289,7 +293,7 @@ test("re-importing the same file finds only duplicates", () => {
 });
 
 test("dedupe matches date + amount + normalized description, and counts repeats", () => {
-  const existing = [{ date: "2026-09-02", amount: 4.5, description: "STARBUCKS  STORE 12345" }];
+  const existing = [{ date: "2026-09-02", amount: 4.5, description: "STARBUCKS  STORE 12345" }] as Transaction[];
   const csv = "Date,Description,Amount\n09/02/2026,Starbucks Store 12345,-4.50\n09/02/2026,STARBUCKS STORE 12345,-4.50\n09/03/2026,STARBUCKS STORE 12345,-4.50\n";
   const r = S.prepareImport(csv, { existing });
   assert.equal(r.counts.duplicate, 1); // one already there; the second coffee that day is new
@@ -330,9 +334,9 @@ test("merchantKey strips prefixes, processors, dates, store numbers and location
 });
 
 test("merchantKey is always a word-start match for its own description", () => {
-  const descs = fs.readdirSync(path.join(__dirname, "fixtures"))
+  const descs = fs.readdirSync(path.join(import.meta.dirname, "fixtures"))
     .filter((f) => f.startsWith("spending-"))
-    .flatMap((f) => S.prepareImport(fs.readFileSync(path.join(__dirname, "fixtures", f), "utf8")).rows.map((r) => r.description));
+    .flatMap((f) => S.prepareImport(fs.readFileSync(path.join(import.meta.dirname, "fixtures", f), "utf8")).rows.map((r) => r.description));
   assert.ok(descs.length > 40);
   for (const d of descs) {
     const key = S.merchantKey(d);
@@ -351,8 +355,8 @@ test("generic keys (checks, ATM, transfers) don't become rules", () => {
 test("rules match at word starts; the longest rule wins; rules for deleted items are ignored", () => {
   const rules = [{ match: "kroger", itemId: "groc" }, { match: "kroger fuel", itemId: "gas" }, { match: "shell", itemId: "gone" }];
   const ids = new Set(ITEMS.map((i) => i.id));
-  assert.equal(S.findRule(rules, "KROGER #123 ANN ARBOR", ids).itemId, "groc");
-  assert.equal(S.findRule(rules, "KROGER FUEL #456", ids).itemId, "gas");
+  assert.equal(S.findRule(rules, "KROGER #123 ANN ARBOR", ids)!.itemId, "groc");
+  assert.equal(S.findRule(rules, "KROGER FUEL #456", ids)!.itemId, "gas");
   assert.equal(S.findRule(rules, "SHELL OIL 123", ids), null);
   assert.equal(S.findRule(rules, "MCKROGERS", ids), null);
   assert.equal(S.ruleMatches("netflix.com", "NETFLIX.COM 866-579-7172"), true);
@@ -360,14 +364,14 @@ test("rules match at word starts; the longest rule wins; rules for deleted items
 });
 
 test("item names match whole words, case-insensitively; longest name wins", () => {
-  const items = [...ITEMS, { id: "gasbill", name: "Gas bill", category: "utilities" }, { id: "tv", name: "TV", category: "other" }, { id: "tmo", name: "T-Mobile", category: "utilities" }];
-  assert.equal(S.matchItemByName("netflix.com 866", items).id, "netflix");
-  assert.equal(S.matchItemByName("SHELL GAS STATION", items).id, "gas");
-  assert.equal(S.matchItemByName("CONSUMERS GAS BILL", items).id, "gasbill");
+  const items = [...ITEMS, { id: "gasbill", name: "Gas bill", category: "utilities" }, { id: "tv", name: "TV", category: "other" }, { id: "tmo", name: "T-Mobile", category: "utilities" }] as BudgetItem[];
+  assert.equal(S.matchItemByName("netflix.com 866", items)!.id, "netflix");
+  assert.equal(S.matchItemByName("SHELL GAS STATION", items)!.id, "gas");
+  assert.equal(S.matchItemByName("CONSUMERS GAS BILL", items)!.id, "gasbill");
   assert.equal(S.matchItemByName("GASOLINE ALLEY", items), null); // not a whole word
   assert.equal(S.matchItemByName("BEST BUY TV", items), null); // names under 3 letters are ignored
-  assert.equal(S.matchItemByName("TMOBILE*AUTOPAY", items).id, "tmo");
-  assert.equal(S.matchItemByName("DTE ENERGY PAYMENT", items).id, "dte");
+  assert.equal(S.matchItemByName("TMOBILE*AUTOPAY", items)!.id, "tmo");
+  assert.equal(S.matchItemByName("DTE ENERGY PAYMENT", items)!.id, "dte");
 });
 
 test("autoAssign tries rules first, then item names, else unassigned", () => {
@@ -379,10 +383,10 @@ test("autoAssign tries rules first, then item names, else unassigned", () => {
 
 test("imports use saved rules", () => {
   const r = importFixture("chase-credit", { rules: [{ match: "kroger", itemId: "groc" }, { match: "shell oil", itemId: "gas" }] });
-  const kroger = r.transactions.find((t) => /KROGER/.test(t.description));
+  const kroger = r.transactions.find((t) => /KROGER/.test(t.description))!;
   assert.equal(kroger.itemId, "groc");
   assert.equal(kroger.category, "food");
-  assert.equal(r.rows.find((p) => /SHELL/.test(p.description)).source, "rule");
+  assert.equal((r.rows.find((p) => /SHELL/.test(p.description)) as ParsedImportRow).source, "rule");
 });
 
 test("classifyInflow: tax refunds and payroll are income, store returns are refunds", () => {
@@ -408,11 +412,11 @@ test("monthSummary: planned is annual / 12, actual sums the month, unassigned is
     { id: "7", date: "2026-09-16", amount: 9.99, itemId: "deleted-item" }, // counts as unassigned
     { id: "8", date: "2026-08-31", amount: 999, itemId: "groc" }, // other month
     { id: "9", date: "2026-10-01", amount: 999, itemId: "rent" },
-  ];
+  ] as Transaction[];
   const s = S.monthSummary({ items: ITEMS, transactions: tx, month: "2026-09", today: "2026-09-15", categories: CATS });
   assert.equal(s.count, 7);
   assert.deepEqual(s.groups.map((g) => g.category.id), ["housing", "transport", "food", "utilities", "subscriptions"]);
-  const row = (id) => s.groups.flatMap((g) => g.rows).find((r) => r.item.id === id);
+  const row = (id: string) => s.groups.flatMap((g) => g.rows).find((r) => r.item.id === id)!;
   assert.equal(row("groc").planned, 476.67); // 110 × 52 / 12
   assert.equal(row("groc").actual, 310.75);
   assert.equal(row("groc").diff, 165.92);
@@ -422,27 +426,28 @@ test("monthSummary: planned is annual / 12, actual sums the month, unassigned is
   assert.equal(row("rent").actual, 1250);
   assert.equal(row("rent").over, false);
   assert.equal(row("netflix").actual, 0);
-  const transport = s.groups.find((g) => g.category.id === "transport");
+  const transport = s.groups.find((g) => g.category.id === "transport")!;
   assert.equal(transport.planned, 255);
   assert.equal(transport.actual, 60);
   assert.deepEqual(s.unassigned, { actual: 39.99, count: 2 });
   assert.equal(s.totals.planned, 2127.16); // 1250 + 195 + 60 + 476.67 + 130 + 15.49
   assert.equal(s.totals.actual, 1660.74); // 1250 + 310.75 + 60 + 39.99
   assert.equal(s.totals.diff, 466.42);
-  assert.equal(s.pace.day, 15);
-  assert.equal(s.pace.daysInMonth, 30);
-  assert.equal(s.pace.expected, 1063.58); // planned × 15 / 30
-  assert.equal(s.pace.diff, round(1063.58 - 1660.74));
+  assert.equal(s.pace!.day, 15);
+  assert.equal(s.pace!.daysInMonth, 30);
+  assert.equal(s.pace!.expected, 1063.58); // planned × 15 / 30
+  assert.equal(s.pace!.diff, round(1063.58 - 1660.74));
 });
 
 test("monthSummary: over budget, unplanned spending and no pace outside the current month", () => {
-  const items = [{ id: "a", name: "Coffee", amount: 0, recurrence: "monthly", category: "food" }, { id: "b", name: "Fun", amount: 50, recurrence: "monthly", category: "mystery" }];
-  const tx = [{ date: "2026-02-10", amount: 12, itemId: "a" }, { date: "2026-02-11", amount: 80, itemId: "b" }];
+  // "mystery" is deliberately not a known category
+  const items = [{ id: "a", name: "Coffee", amount: 0, recurrence: "monthly", category: "food" }, { id: "b", name: "Fun", amount: 50, recurrence: "monthly", category: "mystery" }] as BudgetItem[];
+  const tx = [{ date: "2026-02-10", amount: 12, itemId: "a" }, { date: "2026-02-11", amount: 80, itemId: "b" }] as Transaction[];
   const s = S.monthSummary({ items, transactions: tx, month: "2026-02", today: "2026-09-30", categories: CATS });
-  const [coffee] = s.groups.find((g) => g.category.id === "food").rows;
+  const [coffee] = s.groups.find((g) => g.category.id === "food")!.rows;
   assert.equal(coffee.over, true);
   assert.equal(coffee.ratio, Infinity);
-  const fun = s.groups.find((g) => g.category.id === "mystery"); // unknown category still shown
+  const fun = s.groups.find((g) => g.category.id === "mystery")!; // unknown category still shown
   assert.equal(fun.rows[0].over, true);
   assert.equal(fun.diff, -30);
   assert.equal(s.totals.over, true);
@@ -518,12 +523,12 @@ test("sanitize is idempotent and caps rules", () => {
 });
 
 test("capTransactions drops the oldest and reports them", () => {
-  const list = [{ date: "2026-03-01" }, { date: "2026-01-01" }, { date: "2026-02-01" }];
+  const list = [{ date: "2026-03-01" }, { date: "2026-01-01" }, { date: "2026-02-01" }] as Transaction[];
   const { kept, removed } = S.capTransactions(list, 2);
   assert.deepEqual(kept.map((t) => t.date), ["2026-03-01", "2026-02-01"]);
   assert.deepEqual(removed.map((t) => t.date), ["2026-01-01"]);
 });
 
-function round(n) {
+function round(n: number) {
   return Math.round(n * 100) / 100;
 }

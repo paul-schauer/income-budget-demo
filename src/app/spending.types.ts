@@ -1,9 +1,9 @@
 /**
- * Types for the Spending module (js/spending.js): transactions, auto-assign rules,
+ * Types for the Spending module (src/app/spending.ts): transactions, auto-assign rules,
  * bank CSV import and the planned-vs-actual month view.
  * Type-only: nothing here exists at runtime.
  */
-import type { BudgetItem, CategoryId } from "./app";
+import type { BudgetItem, CategoryId } from "./types";
 
 // ---------------------------------------------------------------- saved state
 
