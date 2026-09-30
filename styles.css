@@ -92,7 +92,12 @@ button, input, select { font: inherit; color: inherit; }
 /* Layout */
 .grid { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 20px; align-items: start; }
 .budget { grid-column: 1 / -1; }
-@media (max-width: 880px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 880px) {
+  .grid { grid-template-columns: 1fr; }
+  /* One column: your pay, then the results, then other income. */
+  .left-col { display: contents; }
+  .other-income { order: 3; }
+}
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px; min-width: 0; }
 .card-title { margin: 0 0 14px; font-size: 17px; }
