@@ -125,7 +125,8 @@ export interface AppUtil {
   parseNum(v: unknown): number;
   uid(): string;
   options(list: [string | number, string][], selected?: string | number | null): string;
-  category(id: string): Category;
+  /** Falls back to "Other" for a missing or unknown id. */
+  category(id: string | null | undefined): Category;
   annualOf(item: { amount: number; recurrence: Period }): number;
   ordinal(n: number): string;
   clampDay(v: unknown): number | null;

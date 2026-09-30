@@ -15,40 +15,84 @@
  *   and read-only budget lines from other modules are spread evenly:
  *   annual / paychecks per year.
  */
+/**
+ * @typedef {import("../types/app").AppContext} AppContext
+ * @typedef {import("../types/app").BudgetItem} BudgetItem
+ * @typedef {import("../types/tax").PayPeriod} PayPeriod
+ * @typedef {import("../types/tax").ScheduleApi} ScheduleApi
+ * @typedef {import("../types/tax").TaxApi} TaxApi
+ * @typedef {import("../types/calendar-goals").PlanInput} PlanInput
+ * @typedef {import("../types/calendar-goals").CalendarPlan} CalendarPlan
+ * @typedef {import("../types/calendar-goals").Paycheck} Paycheck
+ * @typedef {import("../types/calendar-goals").BillOccurrence} BillOccurrence
+ * @typedef {import("../types/calendar-goals").SpreadLine} SpreadLine
+ * @typedef {import("../types/calendar-goals").MoveSuggestion} MoveSuggestion
+ * @typedef {import("../types/calendar-goals").MonthInput} MonthInput
+ * @typedef {import("../types/calendar-goals").MonthGrid} MonthGrid
+ * @typedef {import("../types/calendar-goals").MonthDay} MonthDay
+ * @typedef {import("../types/calendar-goals").CalendarApi} CalendarApi
+ */
 (function (root) {
   "use strict";
 
   const isNode = typeof module !== "undefined" && module.exports;
+  /** @type {ScheduleApi} */
   const Schedule = isNode ? require("./schedule.js") : root.Schedule;
+  /** @type {TaxApi} */
   const Tax = isNode ? require("./tax.js") : root.Tax;
   const { PERIODS, PAY_PERIODS } = Tax;
 
   // Upcoming paychecks shown: about three months.
+  /** @type {Record<PayPeriod, number>} */
   const HORIZON = { weekly: 13, biweekly: 7, semimonthly: 6, monthly: 4 };
 
   // ---------- Pure planning logic ----------
 
+  /**
+   * @template T
+   * @param {T[]} list
+   * @param {(x: T) => number} f
+   */
   const sum = (list, f) => list.reduce((s, x) => s + f(x), 0);
+  /** @param {number[]} list */
   const mean = (list) => (list.length ? list.reduce((s, x) => s + x, 0) / list.length : 0);
+  /** @param {unknown} v */
   const finite = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  /**
+   * @param {unknown} v
+   * @returns {v is PayPeriod}
+   */
+  const isPayPeriod = (v) => PAY_PERIODS.includes(/** @type {PayPeriod} */ (v));
 
+  /** @param {BudgetItem | null | undefined} item */
   function dueDayOf(item) {
     const d = Number(item && item.dueDay);
     return Number.isInteger(d) && d >= 1 && d <= 31 ? d : null;
   }
 
+  /** @param {BudgetItem | null | undefined} item */
   function amountOf(item) {
     const a = Number(item && item.amount);
     return Number.isFinite(a) && a > 0 ? a : 0;
   }
 
-  /** A bill that lands on a specific day each month. */
+  /**
+   * A bill that lands on a specific day each month.
+   * @param {BudgetItem | null | undefined} item
+   */
   function isDated(item) {
     return !!item && item.recurrence === "monthly" && dueDayOf(item) !== null;
   }
 
-  /** Dated bill occurrences between fromIso and toIso (inclusive), sorted by date. */
+  /**
+   * Dated bill occurrences between fromIso and toIso (inclusive), sorted by date.
+   * @param {BudgetItem[] | null | undefined} items
+   * @param {string} fromIso
+   * @param {string} toIso
+   * @returns {BillOccurrence[]}
+   */
   function occurrences(items, fromIso, toIso) {
+    /** @type {BillOccurrence[]} */
     const out = [];
     const from = Schedule.parse(fromIso);
     const to = Schedule.parse(toIso);
@@ -56,8 +100,8 @@
     const endKey = to.getUTCFullYear() * 12 + to.getUTCMonth();
     (items || []).forEach((item, index) => {
       const amount = amountOf(item);
-      if (!amount || !isDated(item)) return;
       const dueDay = dueDayOf(item);
+      if (!amount || !isDated(item) || dueDay === null) return;
       let y = from.getUTCFullYear();
       let m = from.getUTCMonth();
       while (y * 12 + m <= endKey) {
@@ -76,6 +120,10 @@
    * Mark paychecks in the lowest quartile of left over as tight. A paycheck
    * has to sit clearly below the average too (by $1 or 2% of take-home), so
    * evenly spread paychecks aren't flagged.
+   * @template {{ left: number, tight?: boolean }} T
+   * @param {T[]} paychecks
+   * @param {number} [net]
+   * @returns {T[]}
    */
   function flagTight(paychecks, net = 0) {
     for (const p of paychecks) p.tight = false;
@@ -91,31 +139,29 @@
 
   /**
    * Upcoming paychecks with the bills each one pays.
-   * @param {object} o
-   * @param {Array}  o.items           budget items ({ id, name, amount, recurrence, category, dueDay })
-   * @param {Array}  o.extras          read-only budget lines ({ name, annual, category, ... })
-   * @param {object} o.income          { payPeriod, nextPayday }
-   * @param {number} o.netPerPaycheck  take-home per paycheck
-   * @param {string} o.today           ISO date
-   * @param {number} [o.count]         paychecks to plan (default: about three months)
+   * @param {PlanInput} [o]  budget items, read-only budget lines, income ({ payPeriod, nextPayday }),
+   *   take-home per paycheck, today (ISO date) and the paychecks to plan (default: about three months)
+   * @returns {CalendarPlan}
    */
   function plan(o = {}) {
     const items = Array.isArray(o.items) ? o.items : [];
     const extras = Array.isArray(o.extras) ? o.extras : [];
     const income = o.income || {};
-    const payPeriod = PAY_PERIODS.includes(income.payPeriod) ? income.payPeriod : "biweekly";
+    const payPeriod = isPayPeriod(income.payPeriod) ? income.payPeriod : "biweekly";
     const perYear = PERIODS[payPeriod].perYear;
     const net = finite(o.netPerPaycheck);
     const count = Math.max(1, Math.floor(finite(o.count)) || HORIZON[payPeriod]);
-    const today = Schedule.parse(o.today) ? o.today : Schedule.todayISO();
+    const today = o.today && Schedule.parse(o.today) ? o.today : Schedule.todayISO();
     const estimated = !Schedule.parse(income.nextPayday);
 
     const days = Schedule.paydays(estimated ? "" : income.nextPayday, payPeriod, today, count + 1);
     // Without a known payday, weekly/biweekly default to the next Friday; pin that
     // down so other date ranges (the month grid) use the same schedule.
-    const anchor = !estimated ? income.nextPayday : (payPeriod === "weekly" || payPeriod === "biweekly") ? days[0] : "";
+    // (nextPayday parses when not estimated)
+    const anchor = !estimated ? /** @type {string} */ (income.nextPayday) : (payPeriod === "weekly" || payPeriod === "biweekly") ? days[0] : "";
     const horizonEnd = Schedule.addDays(days[count], -1);
 
+    /** @type {SpreadLine[]} */
     const spread = [];
     items.forEach((item, index) => {
       const amount = amountOf(item);
@@ -137,11 +183,13 @@
     }
     const spreadTotal = sum(spread, (s) => s.perPaycheck);
 
+    /** @type {Paycheck[]} */
     const paychecks = days.slice(0, count).map((date, i) => ({
       index: i, date, end: Schedule.addDays(days[i + 1], -1), net,
       bills: [], billsTotal: 0, spreadTotal, total: 0, left: 0, over: false, tight: false,
     }));
 
+    /** @type {BillOccurrence[]} */
     const beforeFirst = [];
     for (const occ of occurrences(items, today, horizonEnd)) {
       if (occ.due < days[0]) { beforeFirst.push(occ); continue; }
@@ -171,7 +219,13 @@
     };
   }
 
-  /** Left over per paycheck of plan `p` if item `idx` were due on `day` instead. */
+  /**
+   * Left over per paycheck of plan `p` if item `idx` were due on `day` instead.
+   * @param {CalendarPlan} p
+   * @param {BudgetItem[]} items
+   * @param {number} idx
+   * @param {number} day
+   */
   function leftsWithMove(p, items, idx, day) {
     const dates = p.paychecks.map((pc) => pc.date);
     const lefts = p.paychecks.map((pc) => pc.left + sum(pc.bills.filter((b) => b.index === idx), (b) => b.amount));
@@ -192,6 +246,9 @@
    * paycheck noticeably without leaving any shown paycheck worse off than that one
    * is now. Housing is skipped: rent and mortgage dates rarely move.
    * Returns null when nothing helps enough.
+   * @param {PlanInput} [o]
+   * @param {CalendarPlan} [base]
+   * @returns {MoveSuggestion | null}
    */
   function suggestMove(o = {}, base = plan(o)) {
     const ps = base.paychecks;
@@ -206,6 +263,7 @@
       .filter((i) => items[i] && items[i].category !== "housing");
     if (!candidates.length) return null;
 
+    /** @param {number[]} lefts */
     const variance = (lefts) => {
       const avg = mean(lefts);
       return mean(lefts.map((l) => (l - avg) ** 2));
@@ -216,7 +274,8 @@
 
     const options = [];
     for (const idx of candidates) {
-      const from = dueDayOf(items[idx]);
+      // Candidates come from the tightest paycheck's bills, which are all dated.
+      const from = /** @type {number} */ (dueDayOf(items[idx]));
       for (let day = 1; day <= 28; day++) {
         if (day === from) continue;
         const shown = leftsWithMove(base, items, idx, day);
@@ -240,9 +299,16 @@
     };
   }
 
-  /** The latest payday on or before `iso`. */
+  /**
+   * The latest payday on or before `iso`.
+   * @param {string | null | undefined} anchor
+   * @param {string} payPeriod
+   * @param {string} iso
+   * @returns {string | null}
+   */
   function payingPayday(anchor, payPeriod, iso) {
     const list = Schedule.paydays(anchor, payPeriod, Schedule.addDays(iso, -40), 12);
+    /** @type {string | null} */
     let found = null;
     for (const d of list) { if (d > iso) break; found = d; }
     return found;
@@ -250,28 +316,31 @@
 
   /**
    * One calendar month: paydays and dated bills per day.
-   * @returns {{ year, month, lead, days: Array<{ iso, day, dow, payday, bills }> }}
-   *   lead = weekday of the 1st (0 = Sunday), for blank cells before it.
+   * lead = weekday of the 1st (0 = Sunday), for blank cells before it.
+   * @param {MonthInput} input
+   * @returns {MonthGrid}
    */
   function month({ items, payPeriod, anchor, year, month: m }) {
-    const pp = PAY_PERIODS.includes(payPeriod) ? payPeriod : "biweekly";
+    const pp = isPayPeriod(payPeriod) ? payPeriod : "biweekly";
     const len = Schedule.daysInMonth(year, m);
     const first = Schedule.onDay(year, m, 1);
     const last = Schedule.onDay(year, m, len);
     const paydays = new Set(Schedule.paydays(anchor || "", pp, first, 6).filter((d) => d <= last));
+    /** @type {Map<string, BillOccurrence[]>} */
     const byDay = new Map();
     for (const occ of occurrences(items, first, last)) {
       if (!byDay.has(occ.due)) byDay.set(occ.due, []);
-      byDay.get(occ.due).push(occ);
+      /** @type {BillOccurrence[]} */ (byDay.get(occ.due)).push(occ);
     }
     const days = [];
     for (let d = 1; d <= len; d++) {
       const iso = Schedule.onDay(year, m, d);
-      days.push({ iso, day: d, dow: Schedule.parse(iso).getUTCDay(), payday: paydays.has(iso), bills: byDay.get(iso) || [] });
+      days.push({ iso, day: d, dow: /** @type {Date} */ (Schedule.parse(iso)).getUTCDay(), payday: paydays.has(iso), bills: byDay.get(iso) || [] });
     }
-    return { year, month: m, lead: Schedule.parse(first).getUTCDay(), days };
+    return { year, month: m, lead: /** @type {Date} */ (Schedule.parse(first)).getUTCDay(), days };
   }
 
+  /** @type {CalendarApi} */
   const api = { HORIZON, plan, occurrences, flagTight, suggestMove, payingPayday, month, isDated };
 
   if (isNode) { module.exports = api; return; }
@@ -283,6 +352,7 @@
   const App = root.App;
   const { esc, money, category, ordinal, PERIODS: P } = App.util;
 
+  /** @param {Intl.DateTimeFormatOptions} opts */
   const fmt = (opts) => new Intl.DateTimeFormat("en-US", Object.assign({ timeZone: "UTC" }, opts));
   const F = {
     short: fmt({ weekday: "short", month: "short", day: "numeric" }),
@@ -290,20 +360,43 @@
     long: fmt({ weekday: "long", month: "long", day: "numeric" }),
     monthYear: fmt({ month: "long", year: "numeric" }),
   };
-  const dt = (f, iso) => F[f].format(Schedule.parse(iso));
+  /**
+   * @param {keyof typeof F} f
+   * @param {string} iso  a valid ISO date
+   */
+  const dt = (f, iso) => F[f].format(/** @type {Date} */ (Schedule.parse(iso)));
+  /**
+   * @param {number} n
+   * @param {string} one
+   * @param {string} [many]
+   */
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  /** @param {number} n */
   const signed = (n) => (n < -0.005 ? `−${money(-n)}` : money(n));
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
   const PREV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>';
   const NEXT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
 
+  /**
+   * @typedef {{ y: number, m: number }} YearMonth  m is 0-11
+   * @typedef {object} CalendarModel
+   * @property {PlanInput} input
+   * @property {CalendarPlan} plan
+   * @property {MoveSuggestion | null} suggestion
+   * @property {boolean} hasItems
+   */
+
   // UI-only state; not synced.
+  /** @type {{ ym: YearMonth | null, day: string | null, open: Set<string>, spreadOpen: boolean, showAll: boolean }} */
   const ui = { ym: null, day: null, open: new Set(), spreadOpen: false, showAll: false };
   const VISIBLE = 6; // paychecks listed before "Show more"
+  /** @type {CalendarModel | null} */
   let model = null;
+  /** @type {HTMLElement | null} */
   let rootEl = null;
 
+  /** @param {CalendarPlan} p */
   function schedDescription(p) {
     if (p.payPeriod === "weekly") return "every Friday";
     if (p.payPeriod === "biweekly") return "every other Friday";
@@ -311,14 +404,17 @@
     return "on the last business day of the month";
   }
 
+  /** @param {number} days */
   function whenText(days) {
     return days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
   }
 
+  /** @param {AppContext} ctx */
   function render(ctx) {
     rootEl = rootEl || document.getElementById("calendarRoot");
     if (!rootEl || !ctx) return;
     const s = ctx.state;
+    /** @type {PlanInput} */
     const input = {
       items: s.items,
       extras: ctx.extras || [],
@@ -337,7 +433,7 @@
     if (!rootEl || !model) return;
     const active = document.activeElement;
     const focusKey = active && rootEl.contains(active) ? active.getAttribute("data-focus") : null;
-    const spread = rootEl.querySelector("details.cal-spread");
+    const spread = /** @type {HTMLDetailsElement | null} */ (rootEl.querySelector("details.cal-spread"));
     if (spread) ui.spreadOpen = spread.open;
 
     const p = model.plan;
@@ -345,7 +441,7 @@
     if (p.net <= 0 && !model.hasItems) {
       rootEl.innerHTML = setupHtml();
       if (focusKey) {
-        const el = rootEl.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`);
+        const el = /** @type {HTMLElement | null} */ (rootEl.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`));
         if (el) el.focus({ preventScroll: true });
       }
       return;
@@ -359,7 +455,7 @@
     </div>`;
 
     if (focusKey) {
-      const el = rootEl.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`);
+      const el = /** @type {HTMLElement | null} */ (rootEl.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`));
       if (el) el.focus({ preventScroll: true });
     }
   }
@@ -380,6 +476,7 @@
 
   // ----- Summary + hints -----
 
+  /** @param {CalendarPlan} p */
   function summaryHtml(p) {
     const next = p.paychecks[0];
     const t = p.tightest;
@@ -404,6 +501,7 @@
     </section>`;
   }
 
+  /** @param {CalendarPlan} p */
   function hintsHtml(p) {
     const hints = [];
     if (p.estimated) {
@@ -418,7 +516,7 @@
         <button type="button" class="btn" data-goto="paycheck">Enter pay</button>
       </div>`);
     }
-    const sg = model.suggestion;
+    const sg = /** @type {CalendarModel} */ (model).suggestion; // paint() only runs with a model
     if (sg) {
       hints.push(`<div class="cal-hint">
         <p>Moving <strong>${esc(sg.name)}</strong>'s due date from the ${ordinal(sg.fromDay)} to the ${ordinal(sg.toDay)} would even out your paychecks.
@@ -432,7 +530,7 @@
         <p>${list} ${p.undated.length === 1 ? "is a monthly bill" : "are monthly bills"} without a due date, so ${p.undated.length === 1 ? "it's" : "they're"} spread across every paycheck. Add due dates to see which paycheck pays ${p.undated.length === 1 ? "it" : "them"}.</p>
         <button type="button" class="btn" data-goto="budget">Add due dates</button>
       </div>`);
-    } else if (!model.hasItems) {
+    } else if (!/** @type {CalendarModel} */ (model).hasItems) {
       hints.push(`<div class="cal-hint">
         <p>Add your bills with their due dates to see which paycheck pays each one.</p>
         <button type="button" class="btn" data-goto="budget">Add bills</button>
@@ -443,6 +541,7 @@
 
   // ----- Paycheck list -----
 
+  /** @param {CalendarPlan} p */
   function listHtml(p) {
     const limit = ui.showAll || p.paychecks.length <= VISIBLE + 2 ? p.paychecks.length : VISIBLE;
     const shown = p.paychecks.slice(0, limit);
@@ -471,11 +570,13 @@
     </section>`;
   }
 
+  /** @param {BillOccurrence} b */
   function billLi(b) {
     const c = category(b.category);
     return `<li><span class="dot" style="background:${c.color}"></span><span class="cal-bill-name">${esc(b.name)}<span class="cal-bill-due">${esc(dt("md", b.due))}</span></span><span class="cal-amt">${money(b.amount)}</span></li>`;
   }
 
+  /** @param {CalendarPlan} p */
   function spreadHtml(p) {
     if (!p.spread.length) return "";
     const rows = p.spread.slice().sort((a, b) => b.perPaycheck - a.perPaycheck).map((s) => {
@@ -491,10 +592,15 @@
     </details>`;
   }
 
+  /**
+   * @param {Paycheck} pc
+   * @param {CalendarPlan} p
+   */
   function paycheckHtml(pc, p) {
     const open = ui.open.has(pc.date);
     const id = `cal-pc-${pc.date}`;
     const scale = Math.max(pc.net, pc.total, 0.01);
+    /** @param {number} v */
     const w = (v) => `${((Math.max(0, v) / scale) * 100).toFixed(2)}%`;
     const tags = [
       pc.index === 0 ? `<span class="cal-tag next">${p.daysUntilNext === 0 ? "Today" : "Next"}</span>` : "",
@@ -544,18 +650,30 @@
 
   // ----- Month grid -----
 
+  /**
+   * @param {string} iso  a valid ISO date
+   * @returns {YearMonth}
+   */
   const ymOf = (iso) => {
-    const d = Schedule.parse(iso);
+    const d = /** @type {Date} */ (Schedule.parse(iso));
     return { y: d.getUTCFullYear(), m: d.getUTCMonth() };
   };
+  /**
+   * @param {YearMonth} a
+   * @param {YearMonth} b
+   */
   const sameYm = (a, b) => a.y === b.y && a.m === b.m;
   // The grid opens on the month of the next payday (the upcoming one matters most).
+  /** @param {CalendarPlan} p */
   const defaultYm = (p) => ymOf(p.paychecks[0].date);
 
+  /** @param {CalendarPlan} p */
   function monthHtml(p) {
     const ym = ui.ym || defaultYm(p);
-    const mm = month({ items: model.input.items, payPeriod: p.payPeriod, anchor: p.anchor, year: ym.y, month: ym.m });
+    // paint() only runs with a model
+    const mm = month({ items: /** @type {CalendarModel} */ (model).input.items, payPeriod: p.payPeriod, anchor: p.anchor, year: ym.y, month: ym.m });
     const isTodayMonth = sameYm(ym, ymOf(p.today));
+    /** @param {string | null} iso */
     const inMonth = (iso) => iso && mm.days.some((d) => d.iso === iso);
     const next = p.paychecks[0].date;
     const selected = inMonth(ui.day) ? ui.day : inMonth(p.today) ? p.today : inMonth(next) ? next : null;
@@ -584,7 +702,7 @@
     return `<section class="card cal-month" aria-labelledby="calMonthTitle">
       <div class="cal-month-nav">
         <button type="button" class="icon-btn" data-cal-month="-1" data-focus="prev" aria-label="Previous month" title="Previous month">${PREV}</button>
-        <h2 id="calMonthTitle" class="cal-month-title" aria-live="polite">${esc(F.monthYear.format(Schedule.parse(Schedule.onDay(ym.y, ym.m, 1))))}</h2>
+        <h2 id="calMonthTitle" class="cal-month-title" aria-live="polite">${esc(F.monthYear.format(/** @type {Date} */ (Schedule.parse(Schedule.onDay(ym.y, ym.m, 1)))))}</h2>
         <button type="button" class="icon-btn" data-cal-month="1" data-focus="next" aria-label="Next month" title="Next month">${NEXT}</button>
         ${isTodayMonth ? "" : '<button type="button" class="btn ghost cal-today-btn" data-cal-month="0" data-focus="this-month">Today</button>'}
       </div>
@@ -603,9 +721,14 @@
     </section>`;
   }
 
+  /**
+   * @param {CalendarPlan} p
+   * @param {MonthGrid} mm
+   * @param {string | null} iso  a day in mm, or null
+   */
   function dayDetailHtml(p, mm, iso) {
     if (!iso) return '<p class="cal-note">Tap a day to see what\'s due.</p>';
-    const d = mm.days.find((x) => x.iso === iso);
+    const d = /** @type {MonthDay} */ (mm.days.find((x) => x.iso === iso));
     const parts = [`<h3 class="cal-dd-title">${esc(dt("long", iso))}${iso === p.today ? ' <span class="cal-tag">Today</span>' : ""}</h3>`];
 
     if (d.payday) {
@@ -637,8 +760,10 @@
     if (!rootEl) return;
 
     rootEl.addEventListener("click", (e) => {
-      const el = e.target.closest("[data-cal-toggle], [data-cal-month], [data-cal-day], [data-cal-open], [data-cal-payday], [data-cal-more]");
-      if (!el || !rootEl.contains(el)) return;
+      if (!(e.target instanceof Element)) return;
+      const el = /** @type {HTMLElement | null} */ (e.target.closest("[data-cal-toggle], [data-cal-month], [data-cal-day], [data-cal-open], [data-cal-payday], [data-cal-more]"));
+      // Every control here is drawn by paint(), so rootEl and model are set.
+      if (!el || !rootEl || !rootEl.contains(el) || !model) return;
 
       if (el.hasAttribute("data-cal-payday")) {
         // App's [data-goto] handler switches tabs; then point at the payday field.
@@ -653,7 +778,7 @@
         ui.showAll = true;
         const next = model.plan.paychecks[VISIBLE];
         paint();
-        const head = next && rootEl.querySelector(`[data-cal-toggle="${next.date}"]`);
+        const head = next && /** @type {HTMLElement | null} */ (rootEl.querySelector(`[data-cal-toggle="${next.date}"]`));
         if (head) head.focus({ preventScroll: true });
         return;
       }
@@ -688,7 +813,7 @@
         ui.open.add(date);
         if (model.plan.paychecks.findIndex((pc) => pc.date === date) >= VISIBLE) ui.showAll = true;
         paint();
-        const head = rootEl.querySelector(`[data-cal-toggle="${CSS.escape(date)}"]`);
+        const head = /** @type {HTMLElement | null} */ (rootEl.querySelector(`[data-cal-toggle="${CSS.escape(date)}"]`));
         if (head) {
           head.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
           head.focus({ preventScroll: true });
