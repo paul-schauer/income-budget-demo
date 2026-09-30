@@ -173,7 +173,8 @@
   function compute(code, ctx) {
     const d = get(code);
     if (!d) {
-      return { code: "", name: "", kind: "none", taxable: 0, tax: 0, local: computeLocal({}, ctx.local, 0, 0, ctx),
+      const allWages = (ctx.earners || []).reduce((s, e) => s + num(e.wages), 0);
+      return { code: "", name: "", kind: "none", taxable: 0, tax: 0, local: computeLocal({}, ctx.local, allWages, 0, ctx),
         payroll: (ctx.earners || []).map(() => []), payrollTotal: 0, marginalRate: 0, supplementalRate: 0, notes: [] };
     }
     const it = incomeTax(d, ctx);

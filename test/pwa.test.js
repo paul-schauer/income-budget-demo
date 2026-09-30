@@ -80,7 +80,7 @@ function indexAssets() {
 
 test("manifest parses and has the required fields", () => {
   const m = JSON.parse(read("manifest.webmanifest"));
-  assert.equal(m.name, "Michigan Take-Home & Budget");
+  assert.equal(m.name, "Take-Home & Budget");
   assert.equal(m.short_name, "Take-Home");
   assert.equal(m.start_url, "./#paycheck");
   assert.equal(m.scope, "./");

@@ -7,7 +7,9 @@ const path = require("node:path");
 // Keep every section in normal flow; the phone tab bar is fixed but the page reserves room for it.
 test("no stylesheet pins a section with position: sticky", () => {
   const root = path.join(__dirname, "..");
-  const files = ["styles.css", ...fs.readdirSync(path.join(root, "css")).map((f) => `css/${f}`), ...fs.readdirSync(path.join(root, "js")).map((f) => `js/${f}`)];
+  const list = (dir) => fs.readdirSync(path.join(root, dir), { recursive: true })
+    .filter((f) => /\.(js|css)$/.test(f)).map((f) => `${dir}/${f}`);
+  const files = ["styles.css", ...list("css"), ...list("js")];
   const offenders = files.filter((f) => /position\s*:\s*sticky/.test(fs.readFileSync(path.join(root, f), "utf8")));
   assert.deepEqual(offenders, []);
 });
