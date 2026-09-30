@@ -4,13 +4,24 @@
  * Schema: see STATE_SCHEMA in js/state-tax.js. Each figure's source, and how firmly it
  * could be confirmed, is in docs/state-tax-sources/northeast.md.
  */
+/**
+ * @typedef {import("../../types/tax").Brackets} Brackets
+ * @typedef {import("../../types/tax").ByStatus<Brackets>} StatusBrackets
+ * @typedef {import("../../types/tax").FilingStatus} FilingStatus
+ * @typedef {import("../../types/tax").StateLocal} StateLocal
+ * @typedef {import("../../types/tax").StateComputeContext} StateComputeContext
+ */
 (function (root) {
   "use strict";
 
   const INF = Infinity;
+  /** @param {unknown} v */
   const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
 
-  // Same arithmetic as the engine's bracketTax (data files load without the engine in Node).
+  /**
+   * Same arithmetic as the engine's bracketTax (data files load without the engine in Node).
+   * @param {number} taxable @param {Brackets} brackets
+   */
   function bracketTax(taxable, brackets) {
     let tax = 0;
     let lower = 0;
@@ -23,19 +34,31 @@
   }
 
   // Whole-or-partial steps of `step` in `excess` ("for each $1,000 or fraction thereof").
+  /** @param {number} excess @param {number} step */
   const steps = (excess, step) => (excess > 0 ? Math.ceil(excess / step) : 0);
   // Phase-out fraction rounded to four decimals and capped at 1, as the NY and Maine worksheets do.
+  /** @param {number} excess @param {number} span */
   const fraction = (excess, span) => (excess > 0 ? Math.min(1, Math.round((excess / span) * 1e4) / 1e4) : 0);
+  /** @param {Brackets} b @returns {StatusBrackets} */
   const same = (b) => ({ single: b, mfj: b, mfs: b, hoh: b });
+  /**
+   * Married filing separately uses the single table.
+   * @param {{ single: Brackets, mfj: Brackets, hoh: Brackets }} t
+   * @returns {StatusBrackets}
+   */
+  const withMfs = (t) => ({ ...t, mfs: t.single });
 
-  /*
+  /**
    * Some local taxes pick ONE rate by income and charge it on all of it (Frederick County, MD).
    * The engine's local brackets are marginal, so each step up is spread over a short ramp just
    * above the threshold. Above the ramp the tax is exactly rate × whole income. Inside it (the
    * first $700 to $4,100 above a threshold) it runs up to one step low instead of jumping.
    * table: [[upperBound, rate], ..., [Infinity, rate]]
+   * @param {Brackets} table
+   * @returns {Brackets}
    */
   function rateOnWholeIncome(table) {
+    /** @type {Brackets} */
     const out = [];
     for (let i = 0; i < table.length; i++) {
       const [upper, rate] = table[i];
@@ -52,12 +75,11 @@
 
   // ------------------------------------------------------------------ New York
   // 2026: the first five rates cut by 0.1 point (Chapter 59, Laws of 2025, Part A). Thresholds unchanged.
-  const NY_BRACKETS = {
+  const NY_BRACKETS = withMfs({
     single: [[8500, 0.039], [11700, 0.044], [13900, 0.0515], [80650, 0.054], [215400, 0.059], [1077550, 0.0685], [5000000, 0.0965], [25000000, 0.103], [INF, 0.109]],
     mfj: [[17150, 0.039], [23600, 0.044], [27900, 0.0515], [161550, 0.054], [323200, 0.059], [2155350, 0.0685], [5000000, 0.0965], [25000000, 0.103], [INF, 0.109]],
     hoh: [[12800, 0.039], [17650, 0.044], [20900, 0.0515], [107650, 0.054], [269300, 0.059], [1616450, 0.0685], [5000000, 0.0965], [25000000, 0.103], [INF, 0.109]],
-  };
-  NY_BRACKETS.mfs = NY_BRACKETS.single;
+  });
   const NY_RECAPTURE_AGI = 107650;
 
   /*
@@ -68,6 +90,7 @@
    * less the schedule tax on L, e.g. $333 and $1,140 joint) and phases the rest in over the $50,000
    * of AGI above L.
    */
+  /** @param {number} taxable @param {number} agi @param {Brackets} br */
   function nyTax(taxable, agi, br) {
     const scheduleTax = bracketTax(taxable, br);
     if (agi <= NY_RECAPTURE_AGI) return scheduleTax;
@@ -83,12 +106,22 @@
   // ------------------------------------------------------------------ Connecticut
   // Form CT-1040 TCS: Table A (exemption), C (2% rate phase-out add-back), D (recapture) and
   // E (personal tax credit). Unchanged since the 2024 rate cut and not indexed.
+  /**
+   * @typedef {[number, number, number, number]} StepRule [AGI start, amount per step, step, maximum]
+   * @type {{
+   *   brackets: StatusBrackets,
+   *   exemption: Record<FilingStatus, [number, number]>,
+   *   addBack: Record<FilingStatus, StepRule>,
+   *   recapture: Record<FilingStatus, StepRule[]>,
+   *   credit: Record<FilingStatus, [number, number][]>,
+   * }}
+   */
   const CT = {
-    brackets: {
+    brackets: withMfs({
       single: [[10000, 0.02], [50000, 0.045], [100000, 0.055], [200000, 0.06], [250000, 0.065], [500000, 0.069], [INF, 0.0699]],
       mfj: [[20000, 0.02], [100000, 0.045], [200000, 0.055], [400000, 0.06], [500000, 0.065], [1000000, 0.069], [INF, 0.0699]],
       hoh: [[16000, 0.02], [80000, 0.045], [160000, 0.055], [320000, 0.06], [400000, 0.065], [800000, 0.069], [INF, 0.0699]],
-    },
+    }),
     // Table A: [maximum exemption, AGI where it starts losing $1,000 per $1,000 (or part)].
     exemption: { single: [15000, 30000], mfj: [24000, 48000], mfs: [12000, 24000], hoh: [19000, 38000] },
     // Tables C and D: [AGI start, amount per step, step, maximum].
@@ -107,9 +140,10 @@
       hoh: [[24000, 0.75], [24500, 0.7], [25000, 0.65], [25500, 0.6], [26000, 0.55], [26500, 0.5], [27000, 0.45], [27500, 0.4], [34000, 0.35], [34500, 0.3], [35000, 0.25], [35500, 0.2], [44000, 0.15], [44500, 0.14], [45000, 0.13], [45500, 0.12], [46000, 0.11], [74000, 0.1], [74500, 0.09], [75000, 0.08], [75500, 0.07], [76000, 0.06], [76500, 0.05], [77000, 0.04], [77500, 0.03], [78000, 0.02], [78500, 0.01]],
     },
   };
-  CT.brackets.mfs = CT.brackets.single;
+  /** @param {number} agi @param {StepRule} rule */
   const stepAmount = (agi, [start, per, step, max]) => Math.min(max, per * steps(agi - start, step));
 
+  /** @param {StateComputeContext} ctx */
   function ctTax(ctx) {
     const s = ctx.status;
     const agi = num(ctx.base);
@@ -123,6 +157,7 @@
   }
 
   // ------------------------------------------------------------------ Rhode Island
+  /** @type {Brackets} */
   const RI_BRACKETS = [[82050, 0.0375], [186450, 0.0475], [INF, 0.0599]];
   const RI_EXEMPTION = 5250;
 
@@ -136,22 +171,23 @@
     exemptionPhaseOut: { single: [333450, 125000], mfj: [400100, 125000], mfs: [200050, 62500], hoh: [366750, 125000] },
     dependentCredit: 305,
     dependentCreditStart: { single: 100000, mfj: 150000, mfs: 75000, hoh: 125000 },
-    brackets: {
+    brackets: withMfs({
       single: [[27400, 0.058], [64850, 0.0675], [INF, 0.0715]],
       mfj: [[54850, 0.058], [129750, 0.0675], [INF, 0.0715]],
       hoh: [[41100, 0.058], [97300, 0.0675], [INF, 0.0715]],
-    },
+    }),
   };
-  ME.brackets.mfs = ME.brackets.single;
 
   // ------------------------------------------------------------------ Maryland
-  const MD_BRACKETS = {
-    single: [[1000, 0.02], [2000, 0.03], [3000, 0.04], [100000, 0.0475], [125000, 0.05], [150000, 0.0525], [250000, 0.055], [500000, 0.0575], [1000000, 0.0625], [INF, 0.065]],
-    mfj: [[1000, 0.02], [2000, 0.03], [3000, 0.04], [150000, 0.0475], [175000, 0.05], [225000, 0.0525], [300000, 0.055], [600000, 0.0575], [1200000, 0.0625], [INF, 0.065]],
-  };
-  MD_BRACKETS.mfs = MD_BRACKETS.single;
-  MD_BRACKETS.hoh = MD_BRACKETS.mfj;
+  /** @type {Brackets} */
+  const MD_SINGLE = [[1000, 0.02], [2000, 0.03], [3000, 0.04], [100000, 0.0475], [125000, 0.05], [150000, 0.0525], [250000, 0.055], [500000, 0.0575], [1000000, 0.0625], [INF, 0.065]];
+  /** @type {Brackets} */
+  const MD_JOINT = [[1000, 0.02], [2000, 0.03], [3000, 0.04], [150000, 0.0475], [175000, 0.05], [225000, 0.0525], [300000, 0.055], [600000, 0.0575], [1200000, 0.0625], [INF, 0.065]];
+  // Married filing separately uses the single table; head of household the joint one.
+  /** @type {StatusBrackets} */
+  const MD_BRACKETS = { single: MD_SINGLE, mfj: MD_JOINT, mfs: MD_SINGLE, hoh: MD_JOINT };
   // Each $3,200 exemption by federal AGI: [AGI up to, amount]; $0 above the last row.
+  /** @type {Record<FilingStatus, [number, number][]>} */
   const MD_EXEMPTION = {
     single: [[100000, 3200], [125000, 1600], [150000, 800]],
     mfs: [[100000, 3200], [125000, 1600], [150000, 800]],
@@ -161,10 +197,13 @@
 
   // County tax on Maryland taxable income (Withholding Tax Facts 2026). It's owed where you live,
   // so the nonresident rate is 0.
+  /** @param {string} id @param {string} name @param {number} rate @returns {StateLocal} */
   const mdCounty = (id, name, rate) => ({ id, name, type: "rate-on-state-taxable", resident: rate, nonresident: 0 });
   // Anne Arundel is marginal: 2.70% up to $50,000 ($75,000 joint and HOH), 2.94% up to $400,000
   // ($480,000), 3.20% above.
+  /** @type {Brackets} */
   const AA_SINGLE = [[50000, 0.027], [400000, 0.0294], [INF, 0.032]];
+  /** @type {Brackets} */
   const AA_JOINT = [[75000, 0.027], [480000, 0.0294], [INF, 0.032]];
   // Frederick charges one rate on all taxable income, picked by income: 2.25% up to $25,000,
   // 2.75% up to $50,000 ($100,000 joint and HOH), 2.96% up to $150,000 ($250,000), 3.20% above.
@@ -172,6 +211,7 @@
   const FREDERICK_JOINT = rateOnWholeIncome([[25000, 0.0225], [100000, 0.0275], [250000, 0.0296], [INF, 0.032]]);
 
   // ------------------------------------------------------------------ Entries
+  /** @type {import("../../types/tax").StateTable} */
   const STATES = {
     NY: {
       code: "NY",
@@ -493,4 +533,4 @@
 
   if (typeof module !== "undefined" && module.exports) module.exports = STATES;
   else root.StateTax.register(STATES);
-})(typeof window !== "undefined" ? window : globalThis);
+})(/** @type {Window & typeof globalThis} */ (typeof window !== "undefined" ? window : globalThis));

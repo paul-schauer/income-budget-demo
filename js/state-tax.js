@@ -8,9 +8,21 @@
  * Works in the browser (window.StateTax) and in Node (module.exports).
  * Estimates only, not tax advice.
  */
+/**
+ * @typedef {import("../types/tax").FilingStatus} FilingStatus
+ * @typedef {import("../types/tax").Brackets} Brackets
+ * @typedef {import("../types/tax").StateEntry} StateEntry
+ * @typedef {import("../types/tax").StateTable} StateTable
+ * @typedef {import("../types/tax").StateContext} StateContext
+ * @typedef {import("../types/tax").StateResult} StateResult
+ * @typedef {import("../types/tax").LocalChoice} LocalChoice
+ * @typedef {import("../types/tax").LocalResult} LocalResult
+ * @typedef {import("../types/tax").PayrollAmount} PayrollAmount
+ */
 (function (root) {
   "use strict";
 
+  /** @type {FilingStatus[]} */
   const STATUSES = ["single", "mfj", "mfs", "hoh"];
 
   /*
@@ -39,12 +51,18 @@
    * }
    */
 
+  /** @type {StateTable} */
   const DATA = {};
 
+  /** @param {StateTable} entries */
   function register(entries) {
     for (const [code, entry] of Object.entries(entries || {})) DATA[code] = entry;
   }
 
+  /**
+   * @param {string} code
+   * @returns {StateEntry | null}
+   */
   function get(code) {
     return DATA[code] || null;
   }
@@ -54,6 +72,7 @@
     return Object.values(DATA).map((d) => ({ code: d.code, name: d.name })).sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /** @param {number} taxable @param {Brackets} brackets */
   function bracketTax(taxable, brackets) {
     let tax = 0;
     let lower = 0;
@@ -65,9 +84,12 @@
     return tax;
   }
 
+  /** @param {unknown} v A positive finite number, or 0. */
   const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
-  const statusOf = (s) => (STATUSES.includes(s) ? s : "single");
+  /** @param {unknown} s @returns {FilingStatus} */
+  const statusOf = (s) => (STATUSES.includes(/** @type {FilingStatus} */ (s)) ? /** @type {FilingStatus} */ (s) : "single");
 
+  /** @param {StateEntry} d @param {FilingStatus} status @param {StateContext} ctx */
   function stdDeduction(d, status, ctx) {
     if (d.standardDeduction === "federal") return num(ctx.federalStandardDeduction);
     if (d.standardDeduction && typeof d.standardDeduction === "object") return num(d.standardDeduction[status]);
@@ -81,6 +103,11 @@
    *   earners: [{ wages, k401Trad }]   wages = gross pay less Section 125 benefits,
    *   agi, federalTaxable, federalStandardDeduction, overtimeDeduction,
    * }
+   */
+  /**
+   * @param {StateEntry} d
+   * @param {StateContext} ctx
+   * @returns {{ base: number, taxable: number, tax: number }}
    */
   function incomeTax(d, ctx) {
     const status = statusOf(ctx.status);
@@ -109,7 +136,7 @@
       const out = d.compute({ ...ctx, status, filers, dependents: deps, base, standardDeduction: std }, { taxable, tax });
       if (out && Number.isFinite(out.tax)) {
         tax = Math.max(0, out.tax);
-        if (Number.isFinite(out.taxable)) taxable = Math.max(0, out.taxable);
+        if (typeof out.taxable === "number" && Number.isFinite(out.taxable)) taxable = Math.max(0, out.taxable);
       }
     }
     return { base, taxable, tax };
@@ -124,7 +151,17 @@
    *   "percent-of-state-tax":      resident rate × state income tax (e.g. Yonkers); nonresident rate × wages
    * local: { id, resident (default true), customRate (percent, for id "custom") }
    */
+  /**
+   * @param {Partial<StateEntry>} d
+   * @param {LocalChoice | undefined} local
+   * @param {number} wages
+   * @param {number} stateTaxable
+   * @param {StateContext} ctx
+   * @param {number} [stateTax]
+   * @returns {LocalResult}
+   */
   function computeLocal(d, local, wages, stateTaxable, ctx, stateTax = 0) {
+    /** @type {LocalResult} */
     const none = { id: "none", name: "", tax: 0, rate: 0 };
     if (!local || !local.id || local.id === "none") return none;
     const resident = local.resident !== false;
@@ -156,7 +193,12 @@
     }
   }
 
-  /** Employee payroll deductions (SDI, paid family leave, ...) for one earner's wages. */
+  /**
+   * Employee payroll deductions (SDI, paid family leave, ...) for one earner's wages.
+   * @param {Partial<StateEntry>} d
+   * @param {number} wages
+   * @returns {PayrollAmount[]}
+   */
   function payrollFor(d, wages) {
     return (d.payroll || []).map((p) => {
       const base = p.wageCap ? Math.min(wages, p.wageCap) : wages;
@@ -170,6 +212,11 @@
    * Everything for one household.
    * Returns { code, name, kind, taxable, tax, local, payroll: [per earner [{id,name,amount}]],
    *           payrollTotal, marginalRate, supplementalRate, notes }
+   */
+  /**
+   * @param {string} code
+   * @param {StateContext} ctx
+   * @returns {StateResult}
    */
   function compute(code, ctx) {
     const d = get(code);
@@ -200,7 +247,7 @@
       payroll,
       payrollTotal,
       marginalRate,
-      supplementalRate: Number.isFinite(d.supplementalRate) ? d.supplementalRate : marginalRate,
+      supplementalRate: typeof d.supplementalRate === "number" && Number.isFinite(d.supplementalRate) ? d.supplementalRate : marginalRate,
       overtimeDeduction: !!d.overtimeDeduction,
       unverified: !!d.unverified,
       notes: d.notes || [],
@@ -209,10 +256,11 @@
 
   // ---------- Validation (used by every state's tests) ----------
 
+  /** @param {unknown} br @param {string} where @param {string[]} errors */
   function checkBrackets(br, where, errors) {
     if (!Array.isArray(br) || !br.length) { errors.push(`${where}: missing`); return; }
     let prev = 0;
-    br.forEach(([upper, rate], i) => {
+    /** @type {[number, number][]} */ (br).forEach(([upper, rate], i) => {
       if (!(rate >= 0 && rate < 0.2)) errors.push(`${where}[${i}]: rate ${rate} out of range`);
       if (!(upper > prev)) errors.push(`${where}[${i}]: upper bound ${upper} not ascending`);
       prev = upper;
@@ -220,10 +268,18 @@
     if (br[br.length - 1][0] !== Infinity) errors.push(`${where}: last bracket must end at Infinity`);
   }
 
-  /** Returns a list of problems with an entry (empty when valid). */
-  function validate(d) {
+  /**
+   * Returns a list of problems with an entry (empty when valid).
+   * @param {unknown} raw
+   * @returns {string[]}
+   */
+  function validate(raw) {
+    /** @type {string[]} */
     const errors = [];
-    if (!d || typeof d !== "object") return ["not an object"];
+    if (!raw || typeof raw !== "object") return ["not an object"];
+    // The validator probes arbitrary data, so it reads fields loosely.
+    /** @type {Record<string, any>} */
+    const d = raw;
     if (!/^[A-Z]{2}$/.test(d.code || "")) errors.push("code must be two capital letters");
     if (!d.name) errors.push("name missing");
     if (d.year !== 2026) errors.push("year must be 2026");
@@ -235,7 +291,7 @@
     if (sd && sd !== "federal" && !(typeof sd === "object" && STATUSES.every((s) => Number.isFinite(sd[s]) && sd[s] >= 0))) {
       errors.push("standardDeduction must be 0, \"federal\", or amounts for all four statuses");
     }
-    for (const key of ["personalExemption", "exemptionCredit"]) {
+    for (const key of /** @type {const} */ (["personalExemption", "exemptionCredit"])) {
       const v = d[key];
       if (v && !(Number.isFinite(v.filer ?? 0) && Number.isFinite(v.dependent ?? 0))) errors.push(`${key} invalid`);
     }
@@ -254,12 +310,13 @@
       if (l.type === "brackets-on-state-taxable") for (const s of STATUSES) checkBrackets(l.brackets && l.brackets[s], `locals[${i}].brackets.${s}`, errors);
     }
     if (d.compute != null && typeof d.compute !== "function") errors.push("compute must be a function");
-    if (!Array.isArray(d.sources) || !d.sources.length || !d.sources.every((u) => /^https:\/\//.test(u))) errors.push("sources must list https URLs");
+    if (!Array.isArray(d.sources) || !d.sources.length || !d.sources.every((/** @type {unknown} */ u) => typeof u === "string" && /^https:\/\//.test(u))) errors.push("sources must list https URLs");
     return errors;
   }
 
+  /** @type {import("../types/tax").StateTaxApi} */
   const api = { STATUSES, register, get, list, compute, incomeTax, computeLocal, payrollFor, bracketTax, validate };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.StateTax = api;
-})(typeof window !== "undefined" ? window : globalThis);
+})(/** @type {Window & typeof globalThis} */ (typeof window !== "undefined" ? window : globalThis));

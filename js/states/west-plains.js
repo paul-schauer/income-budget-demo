@@ -4,11 +4,17 @@
  * docs/state-tax-sources/west-plains.md. Figures flagged "unverified" there still need a check against
  * the state's own 2026 publications.
  */
+/**
+ * @typedef {import("../../types/tax").Brackets} Brackets
+ * @typedef {import("../../types/tax").FilingStatus} FilingStatus
+ */
 (function (root) {
   "use strict";
 
+  /** @param {unknown} v */
   const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
 
+  /** @param {number} taxable @param {Brackets} brackets */
   function bracketTax(taxable, brackets) {
     let tax = 0;
     let lower = 0;
@@ -24,8 +30,10 @@
   // FTB indexes brackets and credits each fall (June-to-June CCPI), so the 2026 amounts aren't out yet.
   // These are the 2025 amounts, which EDD's 2026 withholding schedules and the 2026 Form 540-ES also use.
   // The 1% Mental Health Services Tax on taxable income over $1,000,000 is folded into the top brackets.
+  /** @type {Brackets} */
   const CA_SINGLE = [[11079, 0.01], [26264, 0.02], [41452, 0.04], [57542, 0.06], [72724, 0.08],
     [371479, 0.093], [445771, 0.103], [742953, 0.113], [1000000, 0.123], [Infinity, 0.133]];
+  /** @type {Record<FilingStatus, Brackets>} */
   const CA_BRACKETS = {
     single: CA_SINGLE,
     mfj: [[22158, 0.01], [52528, 0.02], [82904, 0.04], [115084, 0.06], [145448, 0.08],
@@ -39,8 +47,11 @@
   const CA_CREDIT_PHASEOUT = { single: 252203, mfj: 504411, mfs: 252203, hoh: 378310 };
 
   // ---------- Oregon ----------
+  /** @type {Brackets} */
   const OR_SINGLE = [[4550, 0.0475], [11400, 0.0675], [125000, 0.0875], [Infinity, 0.099]];
+  /** @type {Brackets} */
   const OR_JOINT = [[9100, 0.0475], [22800, 0.0675], [250000, 0.0875], [Infinity, 0.099]];
+  /** @type {Record<FilingStatus, Brackets>} */
   const OR_BRACKETS = { single: OR_SINGLE, mfj: OR_JOINT, mfs: OR_SINGLE, hoh: OR_JOINT };
   const OR_EXEMPTION_CREDIT = 260;
   // The exemption credit is lost entirely above this federal AGI.
@@ -48,8 +59,10 @@
   // Federal income tax subtraction: capped, and the cap steps down 20% for each $5,000 ($10,000 joint/HOH)
   // of federal AGI from the start of the phase-out, reaching zero at $145,000 ($290,000).
   const OR_FED_SUB_CAP = { single: 8750, mfj: 8750, mfs: 4375, hoh: 8750 };
+  /** @type {Record<FilingStatus, [number, number]>} */
   const OR_FED_SUB_PHASEOUT = { single: [125000, 5000], mfj: [250000, 10000], mfs: [125000, 5000], hoh: [250000, 10000] };
 
+  /** @param {FilingStatus} status @param {number} agi @param {number | undefined} federalTax */
   function oregonFederalSubtraction(status, agi, federalTax) {
     const [start, step] = OR_FED_SUB_PHASEOUT[status];
     const share = agi < start ? 1 : Math.max(0, 1 - 0.2 * (Math.floor((agi - start) / step) + 1));
@@ -59,11 +72,14 @@
   // ---------- Hawaii ----------
   // Act 46 (SLH 2024) schedule for taxable years beginning after Dec 31, 2024; unchanged for 2026.
   // Joint = 2x and head of household = 1.5x the single thresholds (the HRS 235-51 structure).
+  /** @type {Brackets} */
   const HI_SINGLE = [[9600, 0.014], [14400, 0.032], [19200, 0.055], [24000, 0.064], [36000, 0.068], [48000, 0.072],
     [125000, 0.076], [175000, 0.079], [225000, 0.0825], [275000, 0.09], [325000, 0.1], [Infinity, 0.11]];
+  /** @param {Brackets} br @param {number} k @returns {Brackets} */
   const scale = (br, k) => br.map(([upper, rate]) => [upper * k, rate]);
 
   // ---------- Minnesota ----------
+  /** @type {Record<FilingStatus, Brackets>} */
   const MN_BRACKETS = {
     single: [[32570, 0.0535], [106990, 0.068], [198630, 0.0785], [Infinity, 0.0985]],
     mfj: [[47620, 0.0535], [189180, 0.068], [330410, 0.0785], [Infinity, 0.0985]],
@@ -74,6 +90,7 @@
   // The standard deduction shrinks by 3% of AGI over this threshold, by at most 80% of the deduction.
   const MN_STD_PHASEOUT = { single: 238950, mfj: 238950, mfs: 119475, hoh: 238950 };
 
+  /** @type {import("../../types/tax").StateTable} */
   const STATES = {
     CA: {
       code: "CA",
@@ -361,4 +378,4 @@
 
   if (typeof module !== "undefined" && module.exports) module.exports = STATES;
   else root.StateTax.register(STATES);
-})(typeof window !== "undefined" ? window : globalThis);
+})(/** @type {Window & typeof globalThis} */ (typeof window !== "undefined" ? window : globalThis));
