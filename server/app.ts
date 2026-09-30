@@ -1,67 +1,45 @@
-"use strict";
-
-const http = require("node:http");
-const auth = require("./auth");
-const { createStaticHandler } = require("./static");
-const {
+import http from "node:http";
+import * as auth from "./auth";
+import { createStaticHandler } from "./static";
+import {
   HttpError, securityHeaders, isSecure, clientIp, sendJson, sendError, readJson,
   parseCookies, serializeCookie, firstHeader,
-} = require("./http");
+} from "./http";
+import type { JsonFields, Req, Res, Route, ServerConfig, Store, WithApp } from "./types";
 
-/** @typedef {import("../types/server").Req} Req */
-/** @typedef {import("../types/server").Res} Res */
-/** @typedef {import("../types/server").Route} Route */
-/** @typedef {import("../types/server").JsonFields} JsonFields */
-
-const COOKIE = "ib_session";
+export const COOKIE = "ib_session";
 const DAY = 24 * 60 * 60 * 1000;
 const AUTH_LIMIT = 10 * 1024; // bytes
 const STATE_LIMIT = 1024 * 1024; // bytes
-/** @type {Set<string | undefined>} */
-const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const MUTATING = new Set<string | undefined>(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
  * Build the request handler.
- *   config: see loadConfig() in ./config.js
- *   store:  see ./store.js
- * @param {{ config: import("../types/server").ServerConfig, store: import("../types/server").Store }} deps
+ *   config: see loadConfig() in ./config.ts
+ *   store:  see ./store.ts
  */
-function createApp({ config, store }) {
+export function createApp({ config, store }: { config: ServerConfig; store: Store }) {
   const serveStatic = createStaticHandler(config.root);
   const limiter = new auth.RateLimiter(config.rateLimit);
   const sessionMs = config.sessionDays * DAY;
 
   // ---------- helpers ----------
 
-  /**
-   * @param {Req} req
-   * @param {string} token
-   */
-  function sessionCookie(req, token) {
+  function sessionCookie(req: Req, token: string) {
     return serializeCookie(COOKIE, token, { maxAge: sessionMs / 1000, secure: isSecure(req) });
   }
-  /** @param {Req} req */
-  function clearCookie(req) {
+  function clearCookie(req: Req) {
     return serializeCookie(COOKIE, "", { maxAge: 0, secure: isSecure(req) });
   }
 
-  /**
-   * @param {Req} req
-   * @param {Res} res
-   * @param {string} userId
-   */
-  async function startSession(req, res, userId) {
+  async function startSession(req: Req, res: Res, userId: string) {
     const token = auth.newToken();
     await store.createSession(auth.hashToken(token), userId, new Date(Date.now() + sessionMs));
     res.setHeader("Set-Cookie", sessionCookie(req, token));
   }
 
-  /**
-   * Current user from the session cookie (sliding expiry), or null.
-   * @param {Req} req
-   * @param {Res} res
-   */
-  async function currentUser(req, res) {
+  /** Current user from the session cookie (sliding expiry), or null. */
+  async function currentUser(req: Req, res: Res) {
     const token = parseCookies(req.headers.cookie)[COOKIE];
     if (!token || token.length > 200) return null;
     const tokenHash = auth.hashToken(token);
@@ -83,21 +61,14 @@ function createApp({ config, store }) {
     return { user, tokenHash };
   }
 
-  /**
-   * @param {Req} req
-   * @param {Res} res
-   */
-  async function requireUser(req, res) {
+  async function requireUser(req: Req, res: Res) {
     const s = await currentUser(req, res);
     if (!s) throw new HttpError(401, "Not signed in.");
     return s;
   }
 
-  /**
-   * CSRF: same-origin JSON only for anything that changes data.
-   * @param {Req} req
-   */
-  function checkMutation(req) {
+  /** CSRF: same-origin JSON only for anything that changes data. */
+  function checkMutation(req: Req) {
     const origin = req.headers.origin;
     if (origin !== undefined) {
       let host = null;
@@ -110,8 +81,7 @@ function createApp({ config, store }) {
     if (type !== "application/json") throw new HttpError(415, "Content-Type must be application/json.");
   }
 
-  /** @param {string[]} keys */
-  function rateLimited(keys) {
+  function rateLimited(keys: string[]) {
     const wait = Math.max(0, ...keys.map((k) => limiter.retryAfter(k)));
     if (wait) {
       const mins = Math.ceil(wait / 60);
@@ -119,8 +89,7 @@ function createApp({ config, store }) {
     }
   }
 
-  /** @param {JsonFields} body */
-  function credentials(body) {
+  function credentials(body: JsonFields) {
     const email = auth.normalizeEmail(body && body.email);
     const password = body && typeof body.password === "string" ? body.password : "";
     return { email, password };
@@ -128,12 +97,11 @@ function createApp({ config, store }) {
 
   // ---------- routes ----------
 
-  /** @type {Record<string, Route>} */
-  const routes = {
+  const routes: Record<string, Route> = {
     "GET /api/health": async (req, res) => sendJson(res, 200, { ok: true }),
 
     "POST /api/signup": async (req, res, ip) => {
-      const body = /** @type {JsonFields} */ (await readJson(req, AUTH_LIMIT));
+      const body = (await readJson(req, AUTH_LIMIT)) as JsonFields;
       if (!config.allowSignup) throw new HttpError(403, "New sign-ups are turned off on this server.");
       const { email, password } = credentials(body);
       rateLimited([`ip:${ip}`, `email:${email}`]);
@@ -147,7 +115,7 @@ function createApp({ config, store }) {
     },
 
     "POST /api/login": async (req, res, ip) => {
-      const body = /** @type {JsonFields} */ (await readJson(req, AUTH_LIMIT));
+      const body = (await readJson(req, AUTH_LIMIT)) as JsonFields;
       const { email, password } = credentials(body);
       rateLimited([`ip:${ip}`, `email:${email}`]);
       if (!email || !password) throw new HttpError(400, "Enter your email and password.");
@@ -186,7 +154,7 @@ function createApp({ config, store }) {
 
     "PUT /api/state": async (req, res) => {
       const { user } = await requireUser(req, res);
-      const body = /** @type {JsonFields} */ (await readJson(req, STATE_LIMIT));
+      const body = (await readJson(req, STATE_LIMIT)) as JsonFields;
       const { data, baseVersion } = body || {};
       if (!data || typeof data !== "object" || Array.isArray(data)) throw new HttpError(400, "Body needs a data object.");
       // (typeof is implied by Number.isInteger; it narrows baseVersion to a number.)
@@ -195,7 +163,7 @@ function createApp({ config, store }) {
       try {
         r = await store.putState(user.id, data, baseVersion);
       } catch (err) {
-        const e = /** @type {{ code?: unknown } | null | undefined} */ (err);
+        const e = err as { code?: unknown } | null | undefined;
         if (e && (e.code === "22P05" || e.code === "22P02")) throw new HttpError(400, "Data contains characters that can't be stored.");
         throw err;
       }
@@ -213,7 +181,7 @@ function createApp({ config, store }) {
 
     "DELETE /api/account": async (req, res, ip) => {
       const { user } = await requireUser(req, res);
-      const body = /** @type {JsonFields} */ (await readJson(req, AUTH_LIMIT));
+      const body = (await readJson(req, AUTH_LIMIT)) as JsonFields;
       const key = `delete:${user.id}`;
       rateLimited([key, `ip:${ip}`]);
       const password = body && typeof body.password === "string" ? body.password : "";
@@ -229,13 +197,9 @@ function createApp({ config, store }) {
 
   const apiPaths = new Set(Object.keys(routes).map((k) => k.split(" ")[1]));
 
-  /**
-   * @param {Req} req
-   * @param {Res} res
-   */
-  async function handle(req, res) {
+  async function handle(req: Req, res: Res) {
     securityHeaders(req, res);
-    // Take the path as sent (no URL normalization), so "//x" or "/js/../x" can't be reinterpreted.
+    // Take the path as sent (no URL normalization), so "//x" or "/css/../x" can't be reinterpreted.
     let pathname = String(req.url || "").split(/[?#]/)[0];
     if (!pathname.startsWith("/")) {
       try { pathname = new URL(pathname).pathname; } catch (_) { return sendError(res, 400, "Bad request."); }
@@ -256,23 +220,19 @@ function createApp({ config, store }) {
     res.end("Not found");
   }
 
-  /**
-   * @param {Req} req
-   * @param {Res} res
-   */
-  function handler(req, res) {
-    handle(req, res).catch((err) => {
+  function handler(req: Req, res: Res) {
+    handle(req, res).catch((err: unknown) => {
       if (res.headersSent) { res.destroy(); return; }
       if (err instanceof HttpError) return sendError(res, err.status, err.message, err.headers);
       // req.url is always set on requests an http.Server receives.
-      console.error("[server]", req.method, /** @type {string} */ (req.url).split("?")[0], err);
+      console.error("[server]", req.method, req.url!.split("?")[0], err);
       sendError(res, 500, "Something went wrong on the server.");
     });
   }
 
   // Drop expired sessions once an hour.
   const sweeper = setInterval(() => {
-    store.deleteExpiredSessions(new Date()).catch((err) => console.error("[server] session sweep failed:", err.message));
+    store.deleteExpiredSessions(new Date()).catch((err: Error) => console.error("[server] session sweep failed:", err.message));
   }, 60 * 60 * 1000);
   sweeper.unref();
 
@@ -286,14 +246,11 @@ function createApp({ config, store }) {
   };
 }
 
-/**
- * Create (but don't start) an http.Server around the app.
- * @param {Parameters<typeof createApp>[0]} deps
- */
-function createServer({ config, store }) {
+/** Create (but don't start) an http.Server around the app. */
+export function createServer({ config, store }: Parameters<typeof createApp>[0]) {
   const app = createApp({ config, store });
   // `app` is attached just below.
-  const server = /** @type {import("../types/server").WithApp<typeof app>} */ (http.createServer(app.handler));
+  const server = http.createServer(app.handler) as WithApp<typeof app>;
   server.keepAliveTimeout = 65 * 1000; // outlive typical proxy idle timeouts
   server.headersTimeout = 66 * 1000;
   server.requestTimeout = 30 * 1000;
@@ -301,5 +258,3 @@ function createServer({ config, store }) {
   server.app = app;
   return server;
 }
-
-module.exports = { createApp, createServer, COOKIE };

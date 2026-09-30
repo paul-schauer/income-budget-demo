@@ -1,13 +1,14 @@
 /**
- * Types for the Node server (server.js, server/*.js). Type-only: nothing here exists at runtime.
+ * Types for the Node server (server/*.ts). Type-only: nothing here exists at runtime.
  */
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 
 export type Req = IncomingMessage;
 export type Res = ServerResponse;
 
-/** What loadConfig() returns (server/config.js). */
+/** What loadConfig() returns (server/config.ts). */
 export interface ServerConfig {
+  /** The folder static files are served from (public/, which holds the built app). */
   root: string;
   port: number;
   host: string | undefined;
@@ -22,7 +23,7 @@ export interface ServerConfig {
   rateLimit: { max: number; windowMs: number };
 }
 
-// ---------- Storage (server/store.js) ----------
+// ---------- Storage (server/store.ts) ----------
 
 export interface User {
   id: string;
@@ -60,7 +61,7 @@ export type PutStateResult =
   | { ok: true; version: number; updatedAt: Date }
   | { ok: false; current: StoredState | EmptyState };
 
-/** The async interface every store implements (see the comment at the top of server/store.js). */
+/** The async interface every store implements (see the comment at the top of server/store.ts). */
 export interface Store {
   kind: "memory" | "file" | "postgres";
   init(): Promise<void>;
@@ -86,39 +87,7 @@ export interface DataFileContents {
   states?: { userId: string | number; data: unknown; version: number; updatedAt: string }[];
 }
 
-// ---------- The part of the `pg` package the Postgres store uses (pg ships no types) ----------
-
-export interface PgResult<R> {
-  rows: R[];
-  /** Always a number for the INSERT/UPDATE/DELETE/SELECT statements the store runs. */
-  rowCount: number;
-}
-
-export interface PgQueryable {
-  query<R = unknown>(text: string, values?: unknown[]): Promise<PgResult<R>>;
-}
-
-export interface PgPoolClient extends PgQueryable {
-  release(): void;
-}
-
-export interface PgPoolConfig {
-  connectionString?: string;
-  ssl?: false | { rejectUnauthorized: boolean };
-  max?: number;
-  idleTimeoutMillis?: number;
-  connectionTimeoutMillis?: number;
-}
-
-export interface PgPool extends PgQueryable {
-  connect(): Promise<PgPoolClient>;
-  on(event: "error", listener: (err: Error) => void): this;
-  end(): Promise<void>;
-}
-
-export interface PgModule {
-  Pool: new (config: PgPoolConfig) => PgPool;
-}
+// ---------- Postgres (server/store.ts) ----------
 
 /** Table rows as pg returns them (BIGINT ids arrive as strings). */
 export interface UserRow {
@@ -140,7 +109,7 @@ export interface StateRow {
   updated_at: Date;
 }
 
-// ---------- Static files (server/static.js) ----------
+// ---------- Static files (server/static.ts) ----------
 
 export interface StaticFile {
   mtimeMs: number;
@@ -156,7 +125,7 @@ export interface StaticFile {
   stamped?: StaticFile;
 }
 
-// ---------- App (server/app.js) ----------
+// ---------- App (server/app.ts) ----------
 
 /**
  * A parsed JSON request body before validation (readJson() itself returns unknown).

@@ -1,17 +1,17 @@
-"use strict";
-
 /*
  * Michigan take-home & budget: static app + optional accounts and cloud sync.
+ * This is the server's entry point; npm run build bundles it into dist/server.js.
  *
- *   node server.js            production (Postgres when DATABASE_URL is set)
- *   npm run dev               local dev, data kept in data/dev-db.json
+ *   npm run build && npm start   production (Postgres when DATABASE_URL is set)
+ *   npm run dev                  local dev: rebuilds on change, data kept in data/dev-db.json
  *
  * Environment: see .env.example.
  */
 
-const { loadConfig } = require("./server/config");
-const { createStore } = require("./server/store");
-const { createServer } = require("./server/app");
+import type { AddressInfo } from "node:net";
+import { loadConfig } from "./config";
+import { createStore } from "./store";
+import { createServer } from "./app";
 
 async function main() {
   const config = loadConfig();
@@ -23,7 +23,7 @@ async function main() {
       break;
     } catch (err) {
       if (attempt >= 6) throw err;
-      console.error(`[server] storage not ready (${/** @type {Error} */ (err).message}); retrying in ${attempt * 2}s`);
+      console.error(`[server] storage not ready (${(err as Error).message}); retrying in ${attempt * 2}s`);
       await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
     }
   }
@@ -33,17 +33,16 @@ async function main() {
   }
 
   const server = createServer({ config, store });
-  await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(config.port, config.host, resolve);
-  }));
+  });
   // Listening on a TCP port, so address() is an AddressInfo (not a pipe name or null).
-  const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+  const { port } = server.address() as AddressInfo;
   console.log(`[server] listening on http://localhost:${port} (store: ${store.kind}, sign-ups ${config.allowSignup ? "open" : "closed"})`);
 
   let stopping = false;
-  /** @param {string} signal */
-  async function shutdown(signal) {
+  async function shutdown(signal: string) {
     if (stopping) return;
     stopping = true;
     console.log(`[server] ${signal} received, shutting down`);
@@ -53,23 +52,18 @@ async function main() {
     }, 10000);
     force.unref();
     // Stop accepting connections, let in-flight requests finish, then drop stragglers.
-    /** @type {Promise<void>} */
-    const closed = new Promise((resolve) => server.close(() => resolve()));
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
     server.closeIdleConnections();
     setTimeout(() => server.closeAllConnections(), 5000).unref();
     await closed;
-    try { await store.close(); } catch (err) { console.error("[server] store close failed:", /** @type {Error} */ (err).message); }
+    try { await store.close(); } catch (err) { console.error("[server] store close failed:", (err as Error).message); }
     process.exit(0);
   }
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-if (require.main === module) {
-  main().catch((err) => {
-    console.error("[server] failed to start:", err);
-    process.exit(1);
-  });
-}
-
-module.exports = { main };
+main().catch((err: unknown) => {
+  console.error("[server] failed to start:", err);
+  process.exit(1);
+});

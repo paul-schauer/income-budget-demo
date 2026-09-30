@@ -1,15 +1,13 @@
-"use strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ServerConfig } from "./types";
 
-const path = require("node:path");
+// dist/server.js and server/*.ts (run through tsx) both sit one level below the repository root.
+export const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+/** The only folder static files are served from: the built app. */
+export const PUBLIC_DIR = path.resolve(fileURLToPath(new URL("../public/", import.meta.url)));
 
-const ROOT = path.resolve(__dirname, "..");
-
-/**
- * @param {string | undefined} value
- * @param {boolean} fallback
- * @returns {boolean}
- */
-function flag(value, fallback) {
+function flag(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === null || String(value).trim() === "") return fallback;
   return !/^(0|false|no|off)$/i.test(String(value).trim());
 }
@@ -21,10 +19,8 @@ function flag(value, fallback) {
  *   "true"                 -> trust every hop; the client is the leftmost entry
  * On Railway (RAILWAY_ENVIRONMENT* is set) it defaults to 1, because every request
  * arrives through Railway's edge proxy.
- * @param {NodeJS.ProcessEnv} env
- * @returns {number}
  */
-function parseTrustProxy(env) {
+export function parseTrustProxy(env: NodeJS.ProcessEnv): number {
   const raw = env.TRUST_PROXY;
   if (raw === undefined || String(raw).trim() === "") {
     const onRailway = Boolean(env.RAILWAY_ENVIRONMENT_NAME || env.RAILWAY_ENVIRONMENT || env.RAILWAY_PROJECT_ID);
@@ -36,20 +32,15 @@ function parseTrustProxy(env) {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
-/**
- * @param {NodeJS.ProcessEnv} [env]
- * @returns {import("../types/server").ServerConfig}
- */
-function loadConfig(env = process.env) {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const nodeEnv = env.NODE_ENV || "production";
   const port = Number.parseInt(String(env.PORT), 10);
-  /** @type {string | null} */
-  let dataFile = null;
+  let dataFile: string | null = null;
   if (env.DATA_FILE) dataFile = path.resolve(ROOT, env.DATA_FILE);
   else if (nodeEnv === "development") dataFile = path.join(ROOT, "data", "dev-db.json");
 
   return {
-    root: ROOT,
+    root: PUBLIC_DIR,
     port: Number.isInteger(port) && port >= 0 ? port : 3000,
     host: env.HOST || undefined,
     nodeEnv,
@@ -62,5 +53,3 @@ function loadConfig(env = process.env) {
     rateLimit: { max: 10, windowMs: 15 * 60 * 1000 },
   };
 }
-
-module.exports = { loadConfig, parseTrustProxy, ROOT };

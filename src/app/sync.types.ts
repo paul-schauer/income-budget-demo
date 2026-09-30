@@ -1,5 +1,5 @@
 /**
- * Types for accounts and cloud sync (js/sync.js). Type-only: nothing here exists at runtime.
+ * Types for accounts and cloud sync (sync.ts). Type-only: nothing here exists at runtime.
  */
 
 export type SyncStatus = "synced" | "syncing" | "offline" | "error" | "paused";
@@ -33,7 +33,7 @@ export interface SyncDoc {
 export type LooseItem = { id?: unknown; name?: unknown } | null | undefined;
 
 /**
- * A JSON object from the sync API (server/app.js). Only checked to be an object; each route
+ * A JSON object from the sync API (server/app.ts). Only checked to be an object; each route
  * fills in its own fields.
  */
 export interface SyncApiBody {

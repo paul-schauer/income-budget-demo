@@ -2,10 +2,10 @@
  * Service worker: offline app shell.
  *
  * - Precaches the shell (PRECACHE below) into a versioned cache on install.
- *   server.js stamps VERSION with a hash of the app's files on every request, so
- *   any deploy that changes an asset triggers an update prompt (js/pwa.js shows
- *   it and replies with a "SKIP_WAITING" message). On a plain static host, bump
- *   VERSION by hand when you ship.
+ *   The server (server/static.ts) stamps VERSION in the built sw.js with a hash of
+ *   the app's files, so any deploy that changes an asset triggers an update prompt
+ *   (src/app/pwa.ts shows it and replies with a "SKIP_WAITING" message). On a plain
+ *   static host, bump VERSION by hand when you ship.
  * - Navigations: network first with a short timeout, then the cached index.html.
  * - Static assets (js, css, images, manifest): stale-while-revalidate.
  * - /api/* and non-GET requests are never intercepted or cached.
@@ -13,40 +13,32 @@
  * Every URL is resolved against the registration scope, so the app also works
  * from a sub-path (e.g. https://host/budget/).
  */
-"use strict";
+
+// A module, so the names below stay private to it. Nothing is exported: esbuild bundles
+// this file on its own into public/sw.js.
+export {};
 
 // The worker's global scope, typed as a service worker (the WebWorker lib types `self` as a generic worker).
-const sw = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+const sw = self as unknown as ServiceWorkerGlobalScope;
 
+// The server stamps this line in the built sw.js (esbuild may emit it as `var`), so keep it
+// one declaration with a plain string literal.
 const VERSION = "v1";
 const CACHE_PREFIX = "incomebudget-";
 const CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const NAV_TIMEOUT_MS = 3000;
 
-// Paths relative to the scope. test/pwa.test.js checks that each one exists and
-// that every script and stylesheet in index.html is listed here.
+// Paths relative to the scope. test/pwa.test.ts checks that each one exists in public/
+// and that every script and stylesheet in index.html is listed here.
 const PRECACHE = [
   "index.html",
   "styles.css",
+  "app.js",
   "css/sync.css",
   "css/bonus.css",
   "css/calendar.css",
   "css/goals.css",
   "css/spending.css",
-  "js/state-tax.js",
-  "js/states/no-tax-flat.js",
-  "js/states/west-plains.js",
-  "js/states/northeast.js",
-  "js/states/south-central.js",
-  "js/tax.js",
-  "js/app.js",
-  "js/schedule.js",
-  "js/bonus.js",
-  "js/calendar.js",
-  "js/goals.js",
-  "js/spending.js",
-  "js/sync.js",
-  "js/pwa.js",
   "manifest.webmanifest",
   "icons/icon.svg",
   "icons/icon-maskable.svg",
@@ -60,29 +52,21 @@ const PRECACHE = [
 const STATIC_EXT = /\.(?:js|mjs|css|png|svg|ico|webp|jpe?g|gif|woff2?|webmanifest)$/i;
 
 const scopeUrl = () => new URL(sw.registration ? sw.registration.scope : "./", sw.location.href);
-/** @param {string} path */
-const toUrl = (path) => new URL(path, scopeUrl()).href;
+const toUrl = (path: string) => new URL(path, scopeUrl()).href;
 const shellUrl = () => toUrl("index.html");
 
-/**
- * True for /api and /api/... at the origin root or under the scope.
- * @param {URL} url
- */
-function isApi(url) {
+/** True for /api and /api/... at the origin root or under the scope. */
+function isApi(url: URL) {
   const scopePath = scopeUrl().pathname;
   return [`/api`, `${scopePath}api`].some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`));
 }
 
-/** @param {Response} response */
-function isCacheable(response) {
+function isCacheable(response: Response) {
   return Boolean(response) && response.ok && response.type === "basic";
 }
 
-/**
- * A redirected response can't answer a navigation, so store a clean copy.
- * @param {Response} response
- */
-async function cleanResponse(response) {
+/** A redirected response can't answer a navigation, so store a clean copy. */
+async function cleanResponse(response: Response) {
   if (!response.redirected) return response;
   const body = await response.blob();
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
@@ -143,12 +127,8 @@ async function cachedShell() {
   return (await cache.match(shellUrl(), { ignoreVary: true })) || null;
 }
 
-/**
- * The app is one page, so a fresh copy of the scope root or index.html refreshes the shell.
- * @param {Request} request
- * @param {Response} response
- */
-function isShellResponse(request, response) {
+/** The app is one page, so a fresh copy of the scope root or index.html refreshes the shell. */
+function isShellResponse(request: Request, response: Response) {
   if (!isCacheable(response) || response.redirected) return false;
   if (!(response.headers.get("content-type") || "").includes("text/html")) return false;
   const path = new URL(request.url).pathname;
@@ -156,11 +136,7 @@ function isShellResponse(request, response) {
   return path === scopePath || path === `${scopePath}index.html`;
 }
 
-/**
- * @param {FetchEvent} event
- * @returns {Promise<Response>}
- */
-function networkFirstShell(event) {
+function networkFirstShell(event: FetchEvent): Promise<Response> {
   const request = event.request;
   const fromNetwork = fetch(request);
 
@@ -172,8 +148,7 @@ function networkFirstShell(event) {
     return caches.open(CACHE).then((cache) => cache.put(shellUrl(), copy));
   }).catch(() => {}));
 
-  /** @type {Promise<null>} */
-  const timedOut = new Promise((resolve) => setTimeout(resolve, NAV_TIMEOUT_MS, null));
+  const timedOut = new Promise<null>((resolve) => setTimeout(resolve, NAV_TIMEOUT_MS, null));
   const usable = fromNetwork.then((response) => (response.status >= 500 ? null : response), () => null);
 
   return Promise.race([usable, timedOut]).then(async (response) => {
@@ -183,11 +158,7 @@ function networkFirstShell(event) {
   });
 }
 
-/**
- * @param {FetchEvent} event
- * @returns {Promise<Response>}
- */
-function staleWhileRevalidate(event) {
+function staleWhileRevalidate(event: FetchEvent): Promise<Response> {
   const request = event.request;
   let stored = Promise.resolve();
   const fromNetwork = fetch(request).then((response) => {

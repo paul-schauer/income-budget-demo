@@ -1,11 +1,8 @@
-"use strict";
+import net from "node:net";
+import type { OutgoingHttpHeaders } from "node:http";
+import type { Req, Res } from "./types";
 
-const net = require("node:net");
-
-/** @typedef {import("../types/server").Req} Req */
-/** @typedef {import("../types/server").Res} Res */
-
-const CSP = [
+export const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
@@ -18,38 +15,28 @@ const CSP = [
   "form-action 'self'",
 ].join("; ");
 
-class HttpError extends Error {
-  /**
-   * @param {number} status
-   * @param {string} message
-   * @param {Record<string, string>} [headers]
-   */
-  constructor(status, message, headers) {
+export class HttpError extends Error {
+  status: number;
+  headers: Record<string, string>;
+
+  constructor(status: number, message: string, headers?: Record<string, string>) {
     super(message);
     this.status = status;
     this.headers = headers || {};
   }
 }
 
-/** @param {string | string[] | undefined} value */
-function firstHeader(value) {
+export function firstHeader(value: string | string[] | undefined) {
   return String(Array.isArray(value) ? value[0] : value || "").split(",")[0].trim();
 }
 
-/**
- * True when the browser reached us over HTTPS (directly or through Railway's proxy).
- * @param {Req} req
- */
-function isSecure(req) {
+/** True when the browser reached us over HTTPS (directly or through Railway's proxy). */
+export function isSecure(req: Req) {
   // `encrypted` is only set on TLS sockets.
-  return Boolean(req.socket && /** @type {{ encrypted?: boolean }} */ (req.socket).encrypted) || firstHeader(req.headers["x-forwarded-proto"]).toLowerCase() === "https";
+  return Boolean(req.socket && (req.socket as { encrypted?: boolean }).encrypted) || firstHeader(req.headers["x-forwarded-proto"]).toLowerCase() === "https";
 }
 
-/**
- * @param {Req} req
- * @param {Res} res
- */
-function securityHeaders(req, res) {
+export function securityHeaders(req: Req, res: Res) {
   res.setHeader("Content-Security-Policy", CSP);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "same-origin");
@@ -58,12 +45,8 @@ function securityHeaders(req, res) {
   if (isSecure(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000");
 }
 
-/**
- * Client IP. X-Forwarded-For is only honored when trustProxy is set (number of trusted hops).
- * @param {Req} req
- * @param {number} trustProxy
- */
-function clientIp(req, trustProxy) {
+/** Client IP. X-Forwarded-For is only honored when trustProxy is set (number of trusted hops). */
+export function clientIp(req: Req, trustProxy: number) {
   const socketIp = (req.socket && req.socket.remoteAddress) || "unknown";
   if (!trustProxy) return normalizeIp(socketIp);
   const raw = req.headers["x-forwarded-for"];
@@ -73,20 +56,13 @@ function clientIp(req, trustProxy) {
   return normalizeIp(hops[idx]);
 }
 
-/** @param {string} ip */
-function normalizeIp(ip) {
+function normalizeIp(ip: string) {
   ip = String(ip).replace(/^\[|\]$/g, "");
   if (ip.startsWith("::ffff:") && net.isIPv4(ip.slice(7))) ip = ip.slice(7);
   return ip;
 }
 
-/**
- * @param {Res} res
- * @param {number} status
- * @param {unknown} body
- * @param {import("node:http").OutgoingHttpHeaders} [headers]
- */
-function sendJson(res, status, body, headers = {}) {
+export function sendJson(res: Res, status: number, body: unknown, headers: OutgoingHttpHeaders = {}) {
   const buf = Buffer.from(JSON.stringify(body));
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -97,34 +73,25 @@ function sendJson(res, status, body, headers = {}) {
   res.end(buf);
 }
 
-/**
- * @param {Res} res
- * @param {number} status
- * @param {string} message
- * @param {import("node:http").OutgoingHttpHeaders} [headers]
- */
-function sendError(res, status, message, headers) {
+export function sendError(res: Res, status: number, message: string, headers?: OutgoingHttpHeaders) {
   sendJson(res, status, { error: message }, headers);
 }
 
 /**
  * Read and parse a JSON body, enforcing a byte limit. The result is unvalidated.
- * @param {Req} req
- * @param {number} limit bytes
- * @returns {Promise<unknown>}
+ * @param limit bytes
  */
-function readJson(req, limit) {
+export function readJson(req: Req, limit: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"]);
     if (Number.isFinite(declared) && declared > limit) {
       req.resume();
       return reject(new HttpError(413, "Request body too large.", { Connection: "close" }));
     }
-    /** @type {Buffer[]} */
-    const chunks = [];
+    const chunks: Buffer[] = [];
     let size = 0;
     let done = false;
-    req.on("data", (/** @type {Buffer} */ chunk) => {
+    req.on("data", (chunk: Buffer) => {
       if (done) return;
       size += chunk.length;
       if (size > limit) {
@@ -152,13 +119,8 @@ function readJson(req, limit) {
   });
 }
 
-/**
- * @param {string | undefined} header
- * @returns {Record<string, string>}
- */
-function parseCookies(header) {
-  /** @type {Record<string, string>} */
-  const out = {};
+export function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const part of String(header || "").split(";")) {
     const i = part.indexOf("=");
     if (i < 0) continue;
@@ -171,12 +133,11 @@ function parseCookies(header) {
   return out;
 }
 
-/**
- * @param {string} name
- * @param {string} value
- * @param {{ maxAge?: number, secure?: boolean, httpOnly?: boolean, sameSite?: string, path?: string }} [opts]
- */
-function serializeCookie(name, value, { maxAge, secure, httpOnly = true, sameSite = "Lax", path = "/" } = {}) {
+export function serializeCookie(
+  name: string,
+  value: string,
+  { maxAge, secure, httpOnly = true, sameSite = "Lax", path = "/" }: { maxAge?: number; secure?: boolean; httpOnly?: boolean; sameSite?: string; path?: string } = {},
+) {
   let c = `${name}=${encodeURIComponent(value)}; Path=${path}; SameSite=${sameSite}`;
   if (maxAge !== undefined) c += `; Max-Age=${Math.floor(maxAge)}`;
   if (maxAge === 0) c += "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
@@ -184,17 +145,3 @@ function serializeCookie(name, value, { maxAge, secure, httpOnly = true, sameSit
   if (secure) c += "; Secure";
   return c;
 }
-
-module.exports = {
-  CSP,
-  HttpError,
-  isSecure,
-  securityHeaders,
-  clientIp,
-  sendJson,
-  sendError,
-  readJson,
-  parseCookies,
-  serializeCookie,
-  firstHeader,
-};
