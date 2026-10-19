@@ -36,6 +36,7 @@ const PRECACHE = [
   "app.js",
   "css/sync.css",
   "css/bonus.css",
+  "css/compare.css",
   "css/calendar.css",
   "css/goals.css",
   "css/spending.css",

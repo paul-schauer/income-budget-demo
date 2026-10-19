@@ -3,6 +3,7 @@
 // then starts the app once the page is ready.
 import { App, start } from "./core";
 import { bonusModule } from "./bonus";
+import { compareModule } from "./compare";
 import { calendarModule } from "./calendar";
 import { goalsModule } from "./goals";
 import { spendingModule } from "./spending";
@@ -10,6 +11,7 @@ import { syncModule } from "./sync";
 import { setupPwa } from "./pwa";
 
 App.register(bonusModule);
+App.register(compareModule);
 App.register(calendarModule);
 App.register(goalsModule);
 App.register(spendingModule);

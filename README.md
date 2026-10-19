@@ -17,6 +17,7 @@ Written in TypeScript. The browser app builds to static files; the included Node
   - Child and other-dependent credits, and extra W-4 withholding.
   - A "where each paycheck goes" bar and the take-home value of a $1,000 raise.
   - A **bonus & overtime estimator**: withholding on a bonus check vs. the actual tax on it at year end, and extra take-home from overtime, including the 2026 overtime deduction.
+  - **Compare a salary**: your take-home at another salary or hourly rate, with every other setting kept the same. Shows now, new and the change line by line, how much of a raise you keep, and what's left after your budget.
 - **Budget**: items repeat weekly through annually and are converted to any period.
   - Categories, bill due days, % of take-home, sorting, inline edit, and delete with undo.
 - **Calendar**: which bills come out of which paycheck.
@@ -88,7 +89,7 @@ The calculation assumes the standard deduction. It's an estimate, not tax advice
 | `src/lib/schedule.ts` | Payday schedule helpers |
 | `src/app/core.ts`, `src/app/types.ts` | App core, tabs, and the module API (`App.register`) |
 | `src/app/main.ts` | Browser entry point: registers the feature modules and starts the app |
-| `src/app/bonus.ts`, `calendar.ts`, `goals.ts`, `spending.ts` | Feature modules, each styled by `public/css/*.css` |
+| `src/app/bonus.ts`, `compare.ts`, `calendar.ts`, `goals.ts`, `spending.ts` | Feature modules, each styled by `public/css/*.css` |
 | `src/app/sync.ts` | Sign-in dialog and cloud sync client |
 | `src/app/pwa.ts`, `src/sw.ts` | Installable app and offline support |
 | `server/` | Node server: static files, auth, sync API, Postgres/in-memory storage |
