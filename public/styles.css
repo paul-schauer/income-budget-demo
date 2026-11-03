@@ -196,6 +196,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .income-actions .btn.primary { flex: 1; }
 .results .notice { margin: -6px 0 16px; }
 .results .notice[hidden] { display: none; }
+.notice.short { background: var(--bad-soft); }
+.withhold p { margin: 0; }
+.withhold-check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 600; cursor: pointer; }
+.withhold-check input { width: 18px; height: 18px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
+input:disabled { color: var(--muted); cursor: not-allowed; }
 
 .raise { background: var(--accent-soft); color: var(--ink); border-radius: 12px; padding: 10px 14px; font-size: 13px; max-width: 260px; }
 .raise strong { color: var(--accent); }
