@@ -1,6 +1,7 @@
 /*
  * Household tax engine: federal income tax, FICA, self-employment tax, and state/local
- * tax (via src/tax/state-tax.ts) for you, an optional spouse on a joint return, and extra income.
+ * tax (via src/tax/state-tax.ts) for you, an optional spouse on a joint return, and extra income,
+ * plus a check of what employers withhold for federal tax against what the household owes.
  *
  * All figures are for tax year 2026. Sources for every figure are listed in
  * docs/tax-sources.md. This is an estimate, not tax advice.
@@ -85,6 +86,14 @@ export const FEDERAL: TaxApi["FEDERAL"] = {
     phaseIn: { single: 75000, mfj: 150000, mfs: 75000, hoh: 75000 },
     minimum: 400,
     minimumQbi: 1000,
+  },
+  // Pub. 15-T (2026), percentage method for automated payroll with the W-4 step 2 box not checked.
+  // Worksheet 1A line 1g takes the adjustment off annual wages, and each annual STANDARD schedule
+  // withholds nothing up to its zero bracket, then follows the brackets above. The two add up to the
+  // standard deduction, so each employer withholds as if its job were the household's only income.
+  withholding: {
+    adjustment: { single: 8600, mfj: 12900, mfs: 8600, hoh: 8600 },
+    zeroBracket: { single: 7500, mfj: 19300, mfs: 7500, hoh: 15550 },
   },
 };
 
@@ -243,6 +252,21 @@ export function supplementalFederalWithholding(amount: number, priorSupplemental
   return (a - over) * FEDERAL.supplementalRate + over * FEDERAL.supplementalRateOver1M;
 }
 
+/**
+ * Federal income tax an employer withholds from one job in a year (Pub. 15-T percentage method, W-4
+ * step 2 box not checked, nothing in step 4). wages: the job's income-tax wages, after pre-tax
+ * benefits and traditional 401(k); credits: the W-4 step 3 amount. The W-4 has one schedule for
+ * single and married filing separately.
+ */
+export function federalWithholding(wages: number, filingStatus: string, credits?: number) {
+  const status = statusOf(filingStatus);
+  const table = status === "mfs" ? "single" : status;
+  const w = FEDERAL.withholding;
+  const adjusted = Math.max(0, num(wages) - w.adjustment[table]);
+  const tentative = bracketTax(Math.max(0, adjusted - w.zeroBracket[table]), FEDERAL.brackets[table]);
+  return Math.max(0, tentative - num(credits));
+}
+
 export const INCOME_TYPES: IncomeType[] = ["w2", "self", "taxable", "nontaxable"];
 
 function earner(src: EarnerInput | null | undefined, role: "you" | "spouse"): Worker {
@@ -366,19 +390,41 @@ function core(input: TaxInput) {
   const gross = sum((p) => p.gross) + extraGross;
   const benefits = sum((p) => p.benefits);
   const k401 = sum((p) => p.k401);
-  const extraWithholding = sum((p) => p.extraWithholding);
-  const net = gross - benefits - k401 - taxes - extraWithholding;
+  // Before extra withholding, which calculate() takes off.
+  const net = gross - benefits - k401 - taxes;
 
   return {
     status, people, other, additionalMedicare,
     gross, wages: sum((p) => p.gross), extraGross, taxableOther, nontaxable, seProfit,
     benefits, k401, federal, socialSecurity, medicare, seTax, stateTax, localTax,
-    payrollTotal: st.payrollTotal, payrollItems, taxes, extraWithholding, net,
+    payrollTotal: st.payrollTotal, payrollItems, taxes, net,
     agi, federalTaxable, standardDeduction, qbiDeduction: qbi, overtimeDeduction: otDeduction,
     childCredit: Math.min(credits, federalBeforeCredits),
     federalMarginal: marginalBracket(federalTaxable, FEDERAL.brackets[status]),
     st, stateCode,
   };
+}
+
+type Household = ReturnType<typeof core>;
+
+/**
+ * What W-2 employers withhold for federal income tax and the additional Medicare tax, against what the
+ * household owes on that income. h: a core() pass without the income nobody withholds on.
+ * Each job withholds on its own wages: yours, your spouse's, and any second job. The W-4 step 3
+ * credits go on the higher-paid of your and your spouse's jobs, as the W-4 instructions suggest.
+ */
+function withholdingCheck(h: Household) {
+  const main = h.people.reduce((a, p) => (p.fedWages > a.fedWages ? p : a), h.people[0]);
+  const jobs = [
+    ...h.people.map((p) => ({ wages: p.fedWages, medicareWages: p.ficaWages, credits: p === main ? h.childCredit : 0 })),
+    ...h.other.filter((x) => x.type === "w2").map((x) => ({ wages: x.annual, medicareWages: x.annual, credits: 0 })),
+  ];
+  // Employers withhold the 0.9% on each job's wages over $200,000, whatever the filing status.
+  const extraMedicare = (wages: number) =>
+    Math.max(0, wages - FICA.additionalMedicareWithholdingThreshold) * FICA.additionalMedicareRate;
+  const withheld = jobs.reduce((s, j) => s + federalWithholding(j.wages, h.status, j.credits) + extraMedicare(j.medicareWages), 0);
+  const owed = h.federal + h.additionalMedicare;
+  return { withheld, owed, shortfall: Math.max(0, owed - withheld) };
 }
 
 /**
@@ -390,21 +436,38 @@ function core(input: TaxInput) {
  *   local: { id, resident, customRate }   (older callers: cityId / cityResident)
  *   spouse: { grossAnnual, k401Percent, k401Type, preTaxBenefits, extraWithholdingAnnual, age }  (joint returns only)
  *   otherIncome: [{ type: "w2" | "self" | "taxable" | "nontaxable", annual, owner: "you" | "spouse" }]
+ *   withholdShortfall: true to withhold extra equal to the withholding shortfall (replaces extraWithholdingAnnual)
  *
  * Top-level results are household totals. `people` has each earner's paycheck view: income tax on
- * wages is shared by wages, and the extra tax caused by other income sits in `extras`.
+ * wages is shared by wages, and the extra tax caused by other income sits in `extras`. `withholding`
+ * compares what employers withhold for federal tax with what the household owes.
  */
 export function calculate(input: TaxInput): TaxResult {
   input = input || {};
   const full = core(input);
   const wagesOnly = full.other.length ? core({ ...input, otherIncome: [] }) : full;
+  // Without self-employment and other taxable income: nobody withholds on those.
+  const withheldOnly = full.other.some((x) => x.type === "self" || x.type === "taxable")
+    ? core({ ...input, otherIncome: (input.otherIncome || []).filter((x) => !!x && (x.type === "w2" || x.type === "nontaxable")) })
+    : full;
+
+  // Extra withholding first makes up what employers' withholding misses; that tax is already in
+  // `taxes`. Only the rest lowers take-home (it comes back as a refund). Withholding the shortfall
+  // puts it all on your W-4, or your spouse's if you have no wages.
+  const check = withholdingCheck(withheldOnly);
+  const payer = full.people[0].gross > 0 || full.people.length < 2 ? 0 : 1;
+  const extraBy = full.people.map((p, i) => (input.withholdShortfall ? (i === payer ? check.shortfall : 0) : p.extraWithholding));
+  const extraWithholding = extraBy.reduce((s, x) => s + x, 0);
+  const covered = Math.min(extraWithholding, check.shortfall);
+  const overWithheld = extraWithholding - covered;
+  const overShare = extraWithholding > 0 ? overWithheld / extraWithholding : 0;
 
   // Each person's paycheck: their own FICA and payroll deductions, plus a wage-weighted share of
   // income tax and the additional Medicare tax on the wages-only household.
   const shared = wagesOnly.federal + wagesOnly.stateTax + wagesOnly.localTax;
   const weight = (p: Worker) => Math.max(0, p.fedWages);
   const totalWeight = wagesOnly.people.reduce((s, p) => s + weight(p), 0);
-  const people: Person[] = wagesOnly.people.map((p) => {
+  const people: Person[] = wagesOnly.people.map((p, i) => {
     const share = totalWeight > 0 ? weight(p) / totalWeight : 1 / wagesOnly.people.length;
     const incomeTax = shared * share;
     const medicare = p.medicare + wagesOnly.additionalMedicare * share;
@@ -414,19 +477,15 @@ export function calculate(input: TaxInput): TaxResult {
       k401Limit: p.k401Limit, isRoth: p.isRoth, federal: wagesOnly.federal * share,
       state: wagesOnly.stateTax * share, local: wagesOnly.localTax * share, incomeTax,
       socialSecurity: p.socialSecurity, medicare, payroll: p.payroll, taxes,
-      extraWithholding: p.extraWithholding,
-      net: p.gross - p.benefits - p.k401 - taxes - p.extraWithholding,
+      extraWithholding: extraBy[i],
+      net: p.gross - p.benefits - p.k401 - taxes - extraBy[i] * overShare,
     };
   });
 
   // Other income: what it adds after the tax it causes. Tax on self-employment and other taxable
   // income isn't withheld, so it's also reported as an amount to set aside.
   const extrasTax = full.taxes - wagesOnly.taxes;
-  let setAside = 0;
-  if (full.other.some((x) => x.type === "self" || x.type === "taxable")) {
-    const withheldOnly = core({ ...input, otherIncome: (input.otherIncome || []).filter((x) => !!x && (x.type === "w2" || x.type === "nontaxable")) });
-    setAside = Math.max(0, full.taxes - withheldOnly.taxes);
-  }
+  const setAside = Math.max(0, full.taxes - withheldOnly.taxes);
   const extras = {
     gross: full.extraGross,
     taxable: full.taxableOther,
@@ -455,8 +514,8 @@ export function calculate(input: TaxInput): TaxResult {
     payroll: full.payrollTotal,
     payrollItems: full.payrollItems,
     taxes: full.taxes,
-    extraWithholding: full.extraWithholding,
-    net: full.net,
+    extraWithholding,
+    net: full.net - overWithheld,
     effectiveRate: full.gross > 0 ? full.taxes / full.gross : 0,
     agi: full.agi,
     federalTaxable: full.federalTaxable,
@@ -474,6 +533,15 @@ export function calculate(input: TaxInput): TaxResult {
     // People and other income
     people,
     extras,
+    withholding: {
+      withheld: check.withheld,
+      owed: check.owed,
+      shortfall: check.shortfall,
+      covered,
+      overWithheld,
+      due: check.shortfall - covered,
+      payer: payer === 0 ? "you" : "spouse",
+    },
     // Your own paycheck fields, for older callers
     isRoth: you.isRoth,
     k401Capped: you.k401Capped,
@@ -491,7 +559,7 @@ export function calculate(input: TaxInput): TaxResult {
 export function raiseImpact(input: TaxInput, amount: number) {
   const base = calculate(input);
   const bumped = calculate(Object.assign({}, input, { grossAnnual: num(input.grossAnnual) + amount }));
-  return (bumped.net + bumped.extraWithholding) - (base.net + base.extraWithholding);
+  return (bumped.net + bumped.withholding.overWithheld) - (base.net + base.withholding.overWithheld);
 }
 
 export function convert(amount: number, fromPeriod: Period, toPeriod: Period) {

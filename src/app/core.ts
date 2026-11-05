@@ -56,6 +56,7 @@ const DEFAULT_INCOME: Income = {
   localId: "none",    // a local tax from the state's list, "custom", or "none"
   localResident: true,
   localRate: 0,       // percent, for localId "custom"
+  withholdShortfall: false, // extra withholding = what employers' withholding misses (the results card's checkbox)
 };
 
 // A spouse's pay only counts on a joint return.
@@ -217,6 +218,7 @@ function sanitize(input: unknown): AppState {
   if (typeof s.income.state !== "string" || (s.income.state && !StateTax.get(s.income.state))) s.income.state = "";
   if (typeof s.income.localId !== "string") s.income.localId = "none";
   s.income.localResident = s.income.localResident !== false;
+  s.income.withholdShortfall = s.income.withholdShortfall === true;
   if (!PAY_PERIODS.includes(s.spouse.payPeriod)) s.spouse.payPeriod = "biweekly";
   if (!["salary", "hourly"].includes(s.spouse.mode)) s.spouse.mode = "salary";
   if (!["traditional", "roth"].includes(s.spouse.k401Type)) s.spouse.k401Type = "traditional";
@@ -305,6 +307,7 @@ function taxInput(): TaxInput {
     dependents: Number(inc.dependents) || 0,
     otherDependents: Number(inc.otherDependents) || 0,
     extraWithholdingAnnual: (Number(inc.extraWithholding) || 0) * PERIODS[inc.payPeriod].perYear,
+    withholdShortfall: inc.withholdShortfall,
     state: inc.state,
     local: { id: inc.localId, resident: inc.localResident, customRate: Number(inc.localRate) || 0 },
     spouse: isJoint() ? {
@@ -459,6 +462,11 @@ function setupInputs() {
     commit();
   });
 
+  $("#withholdShortfall").addEventListener("change", (e) => {
+    state.income.withholdShortfall = (e.target as HTMLInputElement).checked;
+    commit();
+  });
+
   $("#periodChips").addEventListener("click", (e) => {
     if (!(e.target instanceof Element)) return;
     const chip: HTMLElement | null = e.target.closest("[data-period]");
@@ -602,6 +610,7 @@ function renderPaycheck(ctx: AppContext) {
   $("#resultsBody").hidden = empty;
   $("#bonusRoot").hidden = empty || you.gross <= 0;
   renderStateHint(r);
+  renderWithholding(r);
   if (empty) { $("#k401Hint").textContent = ""; $("#spouseHint").textContent = ""; return; }
 
   // Just your paycheck: show it per paycheck. A spouse or other income: show the household per month.
@@ -650,7 +659,7 @@ function renderPaycheck(ctx: AppContext) {
   }
 
   const flow = ([
-    ["Taxes", r.taxes + r.extraWithholding, "var(--c-tax)"],
+    ["Taxes", r.taxes + r.withholding.overWithheld, "var(--c-tax)"],
     ["401(k)", r.k401, "var(--c-ret)"],
     ["Benefits", r.benefits, "var(--c-ben)"],
     ["Budget", Math.min(ctx.budgetAnnual, Math.max(0, r.net)), "var(--c-bud)"],
@@ -678,8 +687,11 @@ function renderPaycheck(ctx: AppContext) {
   }
   if (r.benefits > 0) rows.push(["Pre-tax benefits", -r.benefits, true]);
   if (r.k401 > 0) rows.push([`${k401Label}${capped}`, -r.k401, true]);
-  rows.push(["Federal income tax", -r.federal, true, r.childCredit > 0 ? `after ${money(r.childCredit)} in credits` : null]);
-  if (r.extraWithholding > 0) rows.push(["Extra federal withholding", -r.extraWithholding, true, "W-4 4(c)"]);
+  const fedNotes = [r.childCredit > 0 && `after ${money(r.childCredit)} in credits`, r.withholding.covered >= 1 && "incl. extra withholding"]
+    .filter((x): x is string => !!x);
+  rows.push(["Federal income tax", -r.federal, true, fedNotes.join(" · ") || null]);
+  // Extra withholding that only makes up the shortfall is part of the federal tax above.
+  if (r.withholding.overWithheld > 0.005) rows.push(["Extra federal withholding", -r.withholding.overWithheld, true, "W-4 4(c)"]);
   rows.push(["Social Security", -r.socialSecurity, true, "6.2%"]);
   rows.push(["Medicare", -r.medicare, true, "1.45%"]);
   if (r.seTax > 0) rows.push(["Self-employment tax", -r.seTax, true, "15.3%"]);
@@ -712,6 +724,50 @@ function renderPaycheck(ctx: AppContext) {
   spHint.textContent = partner && partner.k401 > 0
     ? `401(k): ${money(partner.k401)}/yr · ${money(partner.k401 / spPer)} per paycheck${partner.k401Capped ? " · capped at the limit" : ""}`
     : "";
+}
+
+/**
+ * Results card: how far employers' federal withholding falls short of the tax owed, and the checkbox
+ * that withholds the difference. The W-4 field shows the recommended amount while it's checked.
+ */
+function renderWithholding(r: TaxResult) {
+  const w = r.withholding;
+  const on = state.income.withholdShortfall;
+  const extraEl = $("#extraWithholding") as HTMLInputElement;
+  if (on) extraEl.value = (r.people[0].extraWithholding / PERIODS[state.income.payPeriod].perYear).toFixed(2);
+  else if (extraEl.disabled) extraEl.value = state.income.extraWithholding ? String(state.income.extraWithholding) : "";
+  extraEl.disabled = on;
+  $("#extraHint").hidden = !on;
+
+  // Per paycheck of whoever's W-4 the extra goes on. Under $1 a paycheck isn't worth a W-4 change.
+  const per = PERIODS[w.payer === "spouse" ? state.spouse.payPeriod : state.income.payPeriod].perYear;
+  const short = w.shortfall / per >= 1;
+  const note = $("#withholdNote");
+  note.hidden = !short && !on;
+  ($("#withholdShortfall") as HTMLInputElement).checked = on;
+  if (note.hidden) return;
+
+  const owe = w.due / per >= 1;
+  note.classList.toggle("short", owe);
+  const perCheck = money(w.shortfall / per);
+  const w4 = w.payer === "spouse" ? "your spouse's W-4" : "your W-4";
+  const why = r.people.length > 1 || state.extraIncome.some((x) => x.type === "w2" && x.amount > 0)
+    ? " Each employer withholds as if its job were your only income." : "";
+  const current = r.people[w.payer === "spouse" ? 1 : 0].extraWithholding / per;
+  let text;
+  if (!short) {
+    text = "Your employers' withholding should cover your federal income tax, so you don't need any extra.";
+  } else if (owe) {
+    text = `<b>Your federal withholding is about ${usd0.format(w.due)} a year short</b>, so you'd owe that when you file.${why} ` +
+      `Withholding <b>${perCheck}</b> extra per paycheck${current >= 1 ? ` instead of ${money(current)}` : ""} (step 4(c) of ${w4}) covers it.`;
+  } else if (on) {
+    text = `<b>Withholding ${perCheck} extra per paycheck</b> covers the ${usd0.format(w.shortfall)} a year your employers would miss.${why} Put it in step 4(c) of ${w4}.`;
+  } else {
+    text = `Your extra withholding covers the ${usd0.format(w.shortfall)} a year your employers would miss.${why}`;
+  }
+  if (short) text += " Take-home here already counts this tax.";
+  $("#withholdText").innerHTML = text;
+  $("#withholdLabel").textContent = short ? `Withhold ${perCheck} extra per paycheck` : "Withhold the recommended extra";
 }
 
 function renderStateHint(r: TaxResult) {

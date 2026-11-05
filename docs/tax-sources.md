@@ -46,6 +46,23 @@ Sources: [IRS: 401(k) limit increases to $24,500 for 2026](https://www.irs.gov/n
 | Federal flat rate | 22%, and a mandatory 37% on supplemental wages over $1,000,000 for the year | [IRS Pub. 15 (2026), section 7](https://www.irs.gov/publications/p15) |
 | Michigan | 4.25% flat on bonuses | [Michigan Form 446, 2026 Withholding Guide](https://www.michigan.gov/taxes/-/media/Project/Websites/taxes/Forms/SUW/TY2026/446_Withholding-Guide_2026.pdf) |
 
+## Paycheck withholding (Pub. 15-T)
+
+Used for the withholding check on the results card: what employers withhold for federal income tax, against what the household owes. Checked 2026-11-03 through irs.gov search excerpts (direct fetches were blocked).
+
+Sources: [Publication 15-T (2026)](https://www.irs.gov/publications/p15t), [Pub. 15-T PDF, for use in 2026](https://www.irs.gov/pub/irs-pdf/p15t.pdf), [2026 Form W-4](https://www.irs.gov/pub/irs-pdf/fw4.pdf)
+
+| Figure | Value in code | Status |
+|---|---|---|
+| Worksheet 1A line 1g (W-4 step 2 box not checked) | $12,900 married filing jointly, $8,600 otherwise, taken off annual wages | Confirmed (Pub. 15-T web page excerpt) |
+| Where each annual STANDARD schedule starts withholding | MFJ $19,300 · Single or MFS $7,500 · HOH $15,550 | Confirmed (Pub. 15-T 2026 PDF excerpts: MFJ 10% from $19,300 to $44,100 and 12% to $120,100; single 10% from $7,500 to $19,900, then $1,240 plus 12% to $57,900; HOH 10% from $15,550 to $33,250) |
+| Rest of each schedule | The 2026 rate brackets, shifted up by the amount above. So line 1g plus that amount is the standard deduction ($8,600 + $7,500 = $16,100, $12,900 + $19,300 = $32,200, $8,600 + $15,550 = $24,150), and an employer withholds the tax on its job's wages less the full standard deduction. | Derived. The printed rows above match it, and `test/withholding.test.ts` checks them. |
+| Married filing separately | Withheld on the "Single or Married filing separately" schedule, though the return uses the MFS brackets | Confirmed (Pub. 15-T schedule headings) |
+| W-4 step 3 credits | An annual amount taken off the tentative withholding. The app puts them on the higher-paid of your and your spouse's jobs, at the amount the return allows. | Confirmed (Pub. 15-T: an annual reduction, spread over the pay periods; 2026 W-4: complete steps 3–4(b) on one W-4 only, most accurately the highest-paying job's) |
+| Additional Medicare | Withheld at 0.9% on each job's wages over $200,000; owed over the filing-status threshold | See Payroll taxes above |
+
+The shortfall covers wages and second W-2 jobs. Self-employment and other taxable income have no withholding and are reported as an amount to set aside instead.
+
 ## "No tax on overtime" (OBBBA, IRC §225, tax years 2025–2028)
 
 Sources: [IRS Q&A on the qualified overtime deduction](https://www.irs.gov/newsroom/questions-and-answers-about-the-new-deduction-for-qualified-overtime-compensation), [IRS: What to know about the No Tax on Overtime deduction](https://www.irs.gov/newsroom/what-to-know-about-the-no-tax-on-overtime-deduction), [26 U.S.C. 225](https://uscode.house.gov/view.xhtml?req=granuleid%3AUSC-prelim-title26-section225&num=0&edition=prelim), [Schedule 1-A](https://www.irs.gov/pub/irs-pdf/f1040s1a.pdf), [2026 Form W-4](https://www.irs.gov/pub/irs-pdf/fw4.pdf)
@@ -116,3 +133,4 @@ Every city's nonresident rate is half its resident rate, as the Uniform City Inc
 - Cities get the same number of exemptions as Michigan. Extra city exemptions for age 65+, blind or disabled are left out.
 - The bonus estimator assumes the employer uses the flat supplemental rate and pays the bonus on a separate check, not the aggregate method.
 - The Roth catch-up rule for people with 2025 wages over $150,000 isn't modeled.
+- The withholding check assumes nobody checks the W-4 step 2 box or fills in step 4(a) or 4(b), so the overtime deduction isn't reflected in withholding. It ignores state withholding and the refund of excess Social Security when one person's two jobs pass the wage base.

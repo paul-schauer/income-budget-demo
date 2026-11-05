@@ -169,6 +169,8 @@ export interface TaxInput extends EarnerInput {
   cityResident?: boolean;
   spouse?: EarnerInput | null;
   otherIncome?: (OtherIncomeInput | null | undefined)[];
+  /** withhold extra equal to the withholding shortfall (replaces extraWithholdingAnnual) */
+  withholdShortfall?: boolean;
 }
 
 /** One earner's paycheck view. */
@@ -188,7 +190,9 @@ export interface Person {
   medicare: number;
   payroll: number;
   taxes: number;
+  /** extra withholding (W-4 step 4(c)) from this person's pay */
   extraWithholding: number;
+  /** take-home: extra withholding only counts against it beyond the withholding shortfall */
   net: number;
 }
 
@@ -201,6 +205,26 @@ export interface Extras {
   tax: number;
   net: number;
   setAside: number;
+}
+
+/**
+ * Federal withholding against federal tax owed, for wages from W-2 jobs (untaxed other income is in
+ * Extras.setAside). Covers federal income tax and the additional Medicare tax.
+ */
+export interface WithholdingCheck {
+  /** what employers withhold in a year, before extra withholding */
+  withheld: number;
+  owed: number;
+  /** owed less withheld, or 0 */
+  shortfall: number;
+  /** the part of the shortfall extra withholding pays */
+  covered: number;
+  /** extra withholding beyond the shortfall, refunded when you file */
+  overWithheld: number;
+  /** still owed when you file */
+  due: number;
+  /** whose W-4 the extra goes on when the input asks to withhold the shortfall */
+  payer: "you" | "spouse";
 }
 
 /** Result of Tax.calculate(). Top-level amounts are annual household totals. */
@@ -219,6 +243,7 @@ export interface TaxResult {
   payrollItems: PayrollAmount[];
   taxes: number;
   extraWithholding: number;
+  /** take-home after all tax and any withholding beyond it (withholding.overWithheld) */
   net: number;
   effectiveRate: number;
   agi: number;
@@ -236,6 +261,7 @@ export interface TaxResult {
   local: { id: string; name: string; rate: number | null; tax: number };
   people: Person[];
   extras: Extras;
+  withholding: WithholdingCheck;
   isRoth: boolean;
   k401Capped: boolean;
   k401Limit: number;
@@ -267,6 +293,7 @@ export interface TaxApi {
     supplementalMandatoryThreshold: number;
     overtime: { cap: ByStatus<number>; phaseoutStart: ByStatus<number>; phaseoutPer1000: number; firstYear: number; lastYear: number };
     qbi: { rate: number; threshold: ByStatus<number>; phaseIn: ByStatus<number>; minimum: number; minimumQbi: number };
+    withholding: { adjustment: ByStatus<number>; zeroBracket: ByStatus<number> };
   };
   FICA: {
     socialSecurityRate: number;
@@ -294,6 +321,7 @@ export interface TaxApi {
   overtimeDeduction(premium: number, filingStatus: string, magi: number): number;
   qbiDeduction(qbi: number, taxableBeforeQbi: number, filingStatus: string): number;
   supplementalFederalWithholding(amount: number, priorSupplemental?: number): number;
+  federalWithholding(wages: number, filingStatus: string, credits?: number): number;
 }
 
 // ---------------------------------------------------------------- payday schedule

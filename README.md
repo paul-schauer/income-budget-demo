@@ -15,6 +15,7 @@ Written in TypeScript. The browser app builds to static files; the included Node
   - Salary or hourly pay, four filing statuses, and weekly, biweekly, semimonthly or monthly paychecks.
   - Traditional or Roth 401(k), capped at the limit, and pre-tax benefits (health, HSA, FSA).
   - Child and other-dependent credits, and extra W-4 withholding.
+  - A **withholding check**: when two jobs (yours and your spouse's, or a second job) will withhold too little federal tax, it shows the shortfall and the extra per paycheck that covers it. A checkbox puts that amount in your W-4 extra withholding.
   - A "where each paycheck goes" bar and the take-home value of a $1,000 raise.
   - A **bonus & overtime estimator**: withholding on a bonus check vs. the actual tax on it at year end, and extra take-home from overtime, including the 2026 overtime deduction.
   - **Compare a salary**: your take-home at another salary or hourly rate, with every other setting kept the same. Shows now, new and the change line by line, how much of a raise you keep, and what's left after your budget.

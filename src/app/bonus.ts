@@ -111,7 +111,7 @@ export function overtimeEstimate(o: OvertimeInput): OvertimeResult {
   const keys: OvertimeTaxKey[] = ["k401", "federal", "socialSecurity", "medicare", "michigan", "city", "payroll"];
   const annual = {} as OvertimeAmounts; // filled in below
   for (const k of keys) annual[k] = withOt[k] - base[k];
-  annual.takeHome = (withOt.net + withOt.extraWithholding) - (base.net + base.extraWithholding);
+  annual.takeHome = (withOt.net + withOt.withholding.overWithheld) - (base.net + base.withholding.overWithheld);
   const perCheck = {} as OvertimeAmounts;
   for (const k of Object.keys(annual) as (keyof OvertimeAmounts)[]) perCheck[k] = annual[k] / perYear;
 

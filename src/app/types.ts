@@ -28,6 +28,8 @@ export interface Income {
   localId: string;
   localResident: boolean;
   localRate: number;
+  /** extra withholding follows the recommended amount instead of extraWithholding */
+  withholdShortfall: boolean;
 }
 
 export interface Spouse {

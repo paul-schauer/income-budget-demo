@@ -197,6 +197,7 @@
             </div>
           </div>
           <p class="hint">Extra withholding is W-4 step 4(c). Other dependents (17+ or relatives) get a $500 credit each.</p>
+          <p class="hint" id="extraHint" hidden>Extra withholding is set to the recommended amount. Uncheck the box under your take-home to enter your own.</p>
         </details>
       </section>
 
@@ -263,6 +264,10 @@
           <div class="stats" id="stats"></div>
           <p class="notice" id="stateNote" hidden></p>
           <p class="notice" id="setAsideNote" hidden></p>
+          <div class="notice withhold" id="withholdNote" hidden>
+            <p id="withholdText"></p>
+            <label class="withhold-check"><input type="checkbox" id="withholdShortfall"> <span id="withholdLabel">Withhold the recommended extra</span></label>
+          </div>
 
           <div class="flow">
             <div class="flow-head">
