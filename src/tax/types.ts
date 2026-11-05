@@ -192,7 +192,7 @@ export interface Person {
   taxes: number;
   /** extra withholding (W-4 step 4(c)) from this person's pay */
   extraWithholding: number;
-  /** take-home: extra withholding only counts against it beyond the withholding shortfall */
+  /** what this person's paychecks pay: federal tax as their employer withholds it, less extra withholding */
   net: number;
 }
 
@@ -215,14 +215,18 @@ export interface WithholdingCheck {
   /** what employers withhold in a year, before extra withholding */
   withheld: number;
   owed: number;
-  /** owed less withheld, or 0 */
+  /** owed less withheld, or 0: the extra withholding that covers it */
   shortfall: number;
-  /** the part of the shortfall extra withholding pays */
-  covered: number;
-  /** extra withholding beyond the shortfall, refunded when you file */
-  overWithheld: number;
-  /** still owed when you file */
+  /** still owed when you file, after extra withholding */
   due: number;
+  /** withheld beyond what's owed, extra withholding included: comes back when you file */
+  refund: number;
+  /** federal income tax as paychecks take it: the year's tax less what employers miss (or plus what they over-withhold) */
+  federal: number;
+  /** Medicare as paychecks take it, the same way */
+  medicare: number;
+  /** all taxes as take-home counts them, extra withholding included: net = gross - benefits - 401(k) - taxes */
+  taxes: number;
   /** whose W-4 the extra goes on when the input asks to withhold the shortfall */
   payer: "you" | "spouse";
 }
@@ -243,7 +247,7 @@ export interface TaxResult {
   payrollItems: PayrollAmount[];
   taxes: number;
   extraWithholding: number;
-  /** take-home after all tax and any withholding beyond it (withholding.overWithheld) */
+  /** take-home: what paychecks pay (see withholding.taxes), plus other income after its tax */
   net: number;
   effectiveRate: number;
   agi: number;

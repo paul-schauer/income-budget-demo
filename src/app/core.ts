@@ -659,7 +659,7 @@ function renderPaycheck(ctx: AppContext) {
   }
 
   const flow = ([
-    ["Taxes", r.taxes + r.withholding.overWithheld, "var(--c-tax)"],
+    ["Taxes", r.withholding.taxes, "var(--c-tax)"],
     ["401(k)", r.k401, "var(--c-ret)"],
     ["Benefits", r.benefits, "var(--c-ben)"],
     ["Budget", Math.min(ctx.budgetAnnual, Math.max(0, r.net)), "var(--c-bud)"],
@@ -687,13 +687,14 @@ function renderPaycheck(ctx: AppContext) {
   }
   if (r.benefits > 0) rows.push(["Pre-tax benefits", -r.benefits, true]);
   if (r.k401 > 0) rows.push([`${k401Label}${capped}`, -r.k401, true]);
-  const fedNotes = [r.childCredit > 0 && `after ${money(r.childCredit)} in credits`, r.withholding.covered >= 1 && "incl. extra withholding"]
+  // Federal tax and Medicare as paychecks take them; the withholding note says what's left to settle.
+  const w = r.withholding;
+  const fedNotes = [r.childCredit > 0 && `after ${money(r.childCredit)} in credits`, Math.abs(w.federal - r.federal) >= 1 && "as withheld"]
     .filter((x): x is string => !!x);
-  rows.push(["Federal income tax", -r.federal, true, fedNotes.join(" · ") || null]);
-  // Extra withholding that only makes up the shortfall is part of the federal tax above.
-  if (r.withholding.overWithheld > 0.005) rows.push(["Extra federal withholding", -r.withholding.overWithheld, true, "W-4 4(c)"]);
+  rows.push(["Federal income tax", -w.federal, true, fedNotes.join(" · ") || null]);
+  if (r.extraWithholding > 0.005) rows.push(["Extra federal withholding", -r.extraWithholding, true, "W-4 4(c)"]);
   rows.push(["Social Security", -r.socialSecurity, true, "6.2%"]);
-  rows.push(["Medicare", -r.medicare, true, "1.45%"]);
+  rows.push(["Medicare", -w.medicare, true, "1.45%"]);
   if (r.seTax > 0) rows.push(["Self-employment tax", -r.seTax, true, "15.3%"]);
   if (r.state.code) rows.push([`${esc(r.state.name)} income tax`, -r.stateTax, true, stateNoteText]);
   if (r.local.id !== "none") rows.push([`${esc(r.local.name || "Local")} tax`, -r.localTax, true, r.local.rate != null && r.local.rate > 0 ? `${+(r.local.rate * 100).toFixed(3)}%` : null]);
@@ -759,13 +760,14 @@ function renderWithholding(r: TaxResult) {
     text = "Your employers' withholding should cover your federal income tax, so you don't need any extra.";
   } else if (owe) {
     text = `<b>Your federal withholding is about ${usd0.format(w.due)} a year short</b>, so you'd owe that when you file.${why} ` +
-      `Withholding <b>${perCheck}</b> extra per paycheck${current >= 1 ? ` instead of ${money(current)}` : ""} (step 4(c) of ${w4}) covers it.`;
+      `Withholding <b>${perCheck}</b> extra per paycheck${current >= 1 ? ` instead of ${money(current)}` : ""} (step 4(c) of ${w4}) covers it. ` +
+      "Take-home here is what your paychecks pay, so it doesn't set that aside.";
   } else if (on) {
-    text = `<b>Withholding ${perCheck} extra per paycheck</b> covers the ${usd0.format(w.shortfall)} a year your employers would miss.${why} Put it in step 4(c) of ${w4}.`;
+    text = `<b>Withholding ${perCheck} extra per paycheck</b> covers the ${usd0.format(w.shortfall)} a year your employers would miss.${why} ` +
+      `Put it in step 4(c) of ${w4}. Take-home here already takes it out.`;
   } else {
     text = `Your extra withholding covers the ${usd0.format(w.shortfall)} a year your employers would miss.${why}`;
   }
-  if (short) text += " Take-home here already counts this tax.";
   $("#withholdText").innerHTML = text;
   $("#withholdLabel").textContent = short ? `Withhold ${perCheck} extra per paycheck` : "Withhold the recommended extra";
 }

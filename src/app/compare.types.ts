@@ -17,6 +17,7 @@ export interface CompareChange {
   pay: number;
   benefits: number;
   k401: number;
+  /** taxes as paychecks take them, extra withholding included (TaxResult.withholding.taxes) */
   taxes: number;
   /** take-home pay */
   net: number;
