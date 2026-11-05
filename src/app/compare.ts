@@ -9,7 +9,6 @@
 import * as Tax from "../tax/tax";
 import { App } from "./core";
 import type { AppContext, AppModule } from "./types";
-import type { TaxResult } from "../tax/types";
 import type { CompareInput, CompareNumKey, ComparePrefs, CompareResult } from "./compare.types";
 
 /** A positive number, or 0. */
@@ -30,7 +29,7 @@ export function compareSalary(o: CompareInput): CompareResult {
     pay: next.people[0].gross - now.people[0].gross,
     benefits: next.benefits - now.benefits,
     k401: next.k401 - now.k401,
-    taxes: next.taxes - now.taxes,
+    taxes: next.withholding.taxes - now.withholding.taxes,
     net: next.net - now.net,
   };
   return {
@@ -223,12 +222,11 @@ function renderOut(ctx: AppContext, out: HTMLElement) {
   }
   if (now.benefits > 0 || next.benefits > 0) rows.push(["Pre-tax benefits", -now.benefits, -next.benefits, true]);
   if (now.k401 > 0 || next.k401 > 0) rows.push([now.people.length < 2 && now.isRoth ? "Roth 401(k)" : "401(k)", -now.k401, -next.k401, true]);
-  rows.push(["Federal income tax", -now.federal, -next.federal, true]);
-  // Only extra withholding beyond the tax owed lowers take-home (see Tax.calculate).
-  const over = (r: TaxResult) => r.withholding.overWithheld;
-  if (over(now) > 0.005 || over(next) > 0.005) rows.push(["Extra federal withholding", -over(now), -over(next), true]);
+  // Federal tax and Medicare as paychecks take them, like take-home (see Tax.calculate).
+  rows.push(["Federal income tax", -now.withholding.federal, -next.withholding.federal, true]);
+  if (now.extraWithholding > 0.005 || next.extraWithholding > 0.005) rows.push(["Extra federal withholding", -now.extraWithholding, -next.extraWithholding, true]);
   rows.push(["Social Security", -now.socialSecurity, -next.socialSecurity, true]);
-  rows.push(["Medicare", -now.medicare, -next.medicare, true]);
+  rows.push(["Medicare", -now.withholding.medicare, -next.withholding.medicare, true]);
   if (now.seTax > 0 || next.seTax > 0) rows.push(["Self-employment tax", -now.seTax, -next.seTax, true]);
   if (now.state.code) rows.push([`${esc(now.state.name)} income tax`, -now.stateTax, -next.stateTax, true]);
   if (now.local.id !== "none") rows.push([`${esc(now.local.name || "Local")} tax`, -now.localTax, -next.localTax, true]);

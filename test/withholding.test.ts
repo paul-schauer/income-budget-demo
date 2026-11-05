@@ -15,6 +15,8 @@ const joint: TaxInput = { ...single80k, filingStatus: "mfj", spouse: { grossAnnu
 const jointWithheld = (2480 + (76000 - 32200 - 24800) * 0.12) + (48000 - 32200) * 0.10; // 4,760 + 1,580
 const jointOwed = 2480 + (124000 - 32200 - 24800) * 0.12; // $91,800 taxable
 const jointShortfall = jointOwed - jointWithheld; // 4,180
+// Take-home if paychecks took out the year's whole tax and nothing extra.
+const settled = (r: TaxResult) => r.gross - r.benefits - r.k401 - r.taxes;
 
 test("withholding: each 2026 schedule plus line 1g comes to the standard deduction", () => {
   const w = Tax.FEDERAL.withholding;
@@ -54,28 +56,64 @@ test("withholding: two jobs on a joint return come up short", () => {
   assert.equal(r.withholding.payer, "you");
 });
 
-test("withholding: withholding the shortfall pays it without lowering take-home", () => {
+test("withholding: take-home is what paychecks pay, so it includes what employers don't withhold", () => {
+  const r = Tax.calculate(joint);
+  near(r.net, settled(r) + jointShortfall);
+  near(r.withholding.federal, jointWithheld);
+  near(r.withholding.taxes, r.taxes - jointShortfall);
+  near(sumPeople(r), r.net);
+  // Each paycheck: its own FICA and its own employer's withholding.
+  near(r.people[0].net, 80000 - 4000 - 80000 * 0.0765 - (2480 + (76000 - 32200 - 24800) * 0.12));
+  near(r.people[1].net, 50000 - 2000 - 48000 * 0.0765 - (48000 - 32200) * 0.10);
+});
+
+test("withholding: withholding the shortfall takes it out of your paychecks and leaves nothing due", () => {
   const r = Tax.calculate(joint);
   const covered = Tax.calculate({ ...joint, withholdShortfall: true, extraWithholdingAnnual: 9999 });
   near(covered.extraWithholding, jointShortfall); // replaces the amount entered
   near(covered.people[0].extraWithholding, jointShortfall);
-  near(covered.withholding.covered, jointShortfall);
   near(covered.withholding.due, 0);
-  near(covered.withholding.overWithheld, 0);
+  near(covered.withholding.refund, 0);
   near(covered.taxes, r.taxes);
-  near(covered.net, r.net);
+  near(covered.net, r.net - jointShortfall);
+  near(covered.net, settled(covered));
+  near(covered.people[0].net, r.people[0].net - jointShortfall);
+  near(covered.people[1].net, r.people[1].net);
   near(sumPeople(covered), covered.net);
 });
 
-test("withholding: extra withholding pays the shortfall first; only the rest lowers take-home", () => {
+test("withholding: extra withholding comes out of take-home, lowers what's due, then is refunded", () => {
   const none = Tax.calculate(joint);
   const some = Tax.calculate({ ...joint, extraWithholdingAnnual: 1000 });
-  near(some.net, none.net);
+  near(none.net - some.net, 1000);
   near(some.withholding.due, jointShortfall - 1000);
+  near(some.withholding.refund, 0);
   const more = Tax.calculate({ ...joint, extraWithholdingAnnual: 5000 });
-  near(more.withholding.overWithheld, 5000 - jointShortfall);
-  near(none.net - more.net, 5000 - jointShortfall);
-  near(none.people[0].net - more.people[0].net, 5000 - jointShortfall);
+  near(none.net - more.net, 5000);
+  near(more.withholding.due, 0);
+  near(more.withholding.refund, 5000 - jointShortfall);
+});
+
+test("withholding: when an employer withholds too much, take-home is lower and the rest is refunded", () => {
+  // One $300,000 earner on a joint return: the employer withholds the 0.9% over $200,000, but a
+  // joint return only owes it over $250,000.
+  const r = Tax.calculate({ ...joint, grossAnnual: 300000, k401Percent: 0, spouse: null });
+  const over = (300000 - 200000) * 0.009 - (300000 - 250000) * 0.009; // 450
+  near(r.withholding.shortfall, 0);
+  near(r.withholding.refund, over);
+  near(r.withholding.medicare, r.medicare + over);
+  near(r.net, settled(r) - over);
+});
+
+test("withholding: take-home is gross less benefits, 401(k) and taxes as paychecks take them", () => {
+  for (const input of [
+    single80k, joint, { ...joint, withholdShortfall: true },
+    { ...joint, otherIncome: [{ type: "w2", annual: 15000, owner: "spouse" }, { type: "self", annual: 12000 }, { type: "taxable", annual: 3000 }] },
+  ]) {
+    const r = Tax.calculate(input);
+    near(r.net, r.gross - r.benefits - r.k401 - r.withholding.taxes);
+    near(sumPeople(r) + r.extras.net, r.net);
+  }
 });
 
 test("withholding: the step 3 credits go on the higher-paid job", () => {
@@ -99,6 +137,8 @@ test("withholding: a second W-2 job withholds on its own, so it comes up short",
   near(r.withholding.withheld, withheld);
   near(r.withholding.shortfall, (1240 + (50400 - 12400) * 0.12 + (96000 - 16100 - 50400) * 0.22) - withheld); // 12,290 - 8,280
   near(r.extras.setAside, 0);
+  // The second job's paychecks pay out what its employer doesn't withhold.
+  near(r.extras.net, 20000 - r.extras.tax + r.withholding.shortfall);
 });
 
 test("withholding: self-employment income stays out of it and is set aside instead", () => {
@@ -119,8 +159,9 @@ test("withholding: with no wages of your own, the extra goes on your spouse's W-
   near(r.people[1].extraWithholding, shortfall);
 });
 
-test("withholding: a raise's take-home doesn't depend on extra withholding", () => {
-  const plain = Tax.raiseImpact(joint, 1000);
-  near(Tax.raiseImpact({ ...joint, withholdShortfall: true }, 1000), plain);
-  near(Tax.raiseImpact({ ...joint, extraWithholdingAnnual: 8000 }, 1000), plain);
+test("withholding: with the shortfall withheld, a raise adds what you keep after tax", () => {
+  // Joint return in the 12% bracket: $1,000 more pay, $50 more 401(k), income tax on the other $950.
+  near(Tax.raiseImpact({ ...joint, withholdShortfall: true }, 1000), 1000 - 50 - 950 * 0.12 - 1000 * 0.0765);
+  // A fixed extra amount doesn't change with the raise.
+  near(Tax.raiseImpact({ ...joint, extraWithholdingAnnual: 8000 }, 1000), Tax.raiseImpact(joint, 1000));
 });

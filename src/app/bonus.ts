@@ -6,7 +6,7 @@
  * (this browser only), not in App state.
  */
 import * as Tax from "../tax/tax";
-import type { FilingStatus } from "../tax/types";
+import type { FilingStatus, TaxResult } from "../tax/types";
 import { App } from "./core";
 import type { AppContext, AppModule, Income } from "./types";
 import type {
@@ -108,10 +108,13 @@ export function overtimeEstimate(o: OvertimeInput): OvertimeResult {
   const withOt = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual }));
   const withDeduction = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual, overtimePremium: premiumAnnual }));
 
+  // Federal tax (extra withholding included) and Medicare as paychecks take them, like take-home.
+  const fromPay = (r: TaxResult) => ({ ...r, federal: r.withholding.federal + r.extraWithholding, medicare: r.withholding.medicare });
+  const [now, next] = [fromPay(base), fromPay(withOt)];
   const keys: OvertimeTaxKey[] = ["k401", "federal", "socialSecurity", "medicare", "michigan", "city", "payroll"];
   const annual = {} as OvertimeAmounts; // filled in below
-  for (const k of keys) annual[k] = withOt[k] - base[k];
-  annual.takeHome = (withOt.net + withOt.withholding.overWithheld) - (base.net + base.withholding.overWithheld);
+  for (const k of keys) annual[k] = next[k] - now[k];
+  annual.takeHome = withOt.net - base.net;
   const perCheck = {} as OvertimeAmounts;
   for (const k of Object.keys(annual) as (keyof OvertimeAmounts)[]) perCheck[k] = annual[k] / perYear;
 

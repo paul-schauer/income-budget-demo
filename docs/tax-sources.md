@@ -48,7 +48,7 @@ Sources: [IRS: 401(k) limit increases to $24,500 for 2026](https://www.irs.gov/n
 
 ## Paycheck withholding (Pub. 15-T)
 
-Used for the withholding check on the results card: what employers withhold for federal income tax, against what the household owes. Checked 2026-11-03 through irs.gov search excerpts (direct fetches were blocked).
+Used for take-home, which counts federal income tax as each employer withholds it, and for the withholding check on the results card: what employers withhold, against what the household owes. Checked 2026-11-03 through irs.gov search excerpts (direct fetches were blocked).
 
 Sources: [Publication 15-T (2026)](https://www.irs.gov/publications/p15t), [Pub. 15-T PDF, for use in 2026](https://www.irs.gov/pub/irs-pdf/p15t.pdf), [2026 Form W-4](https://www.irs.gov/pub/irs-pdf/fw4.pdf)
 
