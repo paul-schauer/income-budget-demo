@@ -62,6 +62,8 @@ test("bonus: maxing out the 401(k) defers the bonus until the limit is reached",
   near(b.k401, 24500 - 20000);
   near(b.federal, 0.22 * (10000 - 4500));
   near(B.bonusEstimate({ taxInput: { ...single60k, k401Max: true }, amount: 10000, ytdWages: 0 }).k401, 0);
+  // Over $150,000 at 55, regular pay already puts in the $24,500 pre-tax max; the bonus adds no Roth catch-up.
+  near(B.bonusEstimate({ taxInput: { ...single60k, grossAnnual: 200000, k401Max: true, age: 55 }, amount: 10000, ytdWages: 0 }).k401, 0);
 });
 
 test("bonus: a high earner's catch-up deferral isn't pre-tax, and the bonus doesn't count as last year's wages", () => {

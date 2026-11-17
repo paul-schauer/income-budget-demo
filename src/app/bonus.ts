@@ -34,9 +34,9 @@ export function bonusEstimate(o: BonusInput): BonusResult {
   const you = base.people[0];
   const isRoth = input.k401Type === "roth";
 
-  // Maxing out defers all of the bonus until the year's limit is reached.
+  // Maxing out defers all of the bonus until the most allowed pre-tax for the year is reached.
   const pct = input.k401Max ? 1 : Math.min(num(input.k401Percent), 100) / 100;
-  const room = Math.max(0, you.k401Limit - you.k401);
+  const room = Math.max(0, (input.k401Max ? you.k401MaxLimit : you.k401Limit) - you.k401);
   const k401 = o.apply401k === false ? 0 : Math.min(amount * pct, room);
   // A high earner's catch-up goes in as Roth, so only the room under the base limit is pre-tax.
   const preTaxRoom = isRoth ? 0 : you.rothCatchUp ? Math.max(0, Tax.FEDERAL.k401Limit - (you.k401 - you.k401Roth)) : Infinity;

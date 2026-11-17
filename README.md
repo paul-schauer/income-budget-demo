@@ -15,7 +15,7 @@ Written in TypeScript. The browser app builds to static files; the included Node
   - **Other income**: self-employment (with self-employment tax and the 20% QBI deduction), a second W-2 job, other taxable income, and non-taxable income. It shows how much to set aside when no tax is withheld.
   - Salary or hourly pay, four filing statuses, and weekly, biweekly, semimonthly or monthly paychecks.
   - Traditional or Roth 401(k), capped at the limit for your age, and pre-tax benefits (health, HSA, FSA).
-  - **Max it out**: contribute the 2026 limit for your age, catch-up included at 50 and up (higher at 60 to 63). With pay over $150,000, the catch-up goes in as Roth, as the 2026 rules require.
+  - **Max it out**: put in the most you can pre-tax for your age: $24,500, plus a catch-up at 50 and up ($8,000, or $11,250 at 60 to 63). With pay over $150,000 a catch-up can only go in as Roth, so max-out stops at $24,500, and a % that goes past it puts the catch-up in as Roth.
   - Child and other-dependent credits, and extra W-4 withholding.
   - Take-home is what your paychecks pay: federal tax as each employer withholds it.
   - A **withholding check**: when two jobs (yours and your spouse's, or a second job) will withhold too little federal tax, it shows what you'd owe when you file and the extra per paycheck that covers it. A checkbox puts that amount in your W-4 extra withholding and takes it out of take-home.

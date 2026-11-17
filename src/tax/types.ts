@@ -145,7 +145,10 @@ export interface EarnerInput {
   k401Type?: "traditional" | "roth" | string;
   /** dollars a year; wins over k401Max and k401Percent */
   k401Annual?: number | string | null;
-  /** contribute the most allowed: the limit for your age, or all of your pay after benefits */
+  /**
+   * contribute the most allowed (k401MaxLimit on the result), or all of your pay after benefits if that's less.
+   * For a traditional 401(k) that's the most that can go in pre-tax.
+   */
   k401Max?: boolean;
   /** age at the end of the tax year: sets the catch-up */
   age?: number;
@@ -186,7 +189,13 @@ export interface Person {
   benefits: number;
   k401: number;
   k401Capped: boolean;
+  /** the elective-deferral limit, catch-up for your age included */
   k401Limit: number;
+  /**
+   * what maxing out contributes: k401Limit, except a traditional 401(k) with wages over the Roth catch-up
+   * threshold stops at the base limit, the most that can go in pre-tax
+   */
+  k401MaxLimit: number;
   isRoth: boolean;
   /** the part of k401 that goes in as Roth: all of a Roth 401(k), or a catch-up that must be Roth */
   k401Roth: number;

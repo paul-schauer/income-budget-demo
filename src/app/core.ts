@@ -828,8 +828,8 @@ function renderPaycheck(ctx: AppContext) {
 
 /**
  * The 401(k) fields for you or your spouse. With "Max it out" checked, the % box is locked and shows the
- * share of pay the limit comes to (the % entered comes back when it's unchecked), and the hint says
- * what the limit is at your age.
+ * share of pay the max comes to (the % entered comes back when it's unchecked), and the hint says what
+ * the max is: the pre-tax limit for your age (see Tax.calculate).
  * @param p  that person's paycheck, or null when they have no pay entered
  */
 function renderK401(p: Person | null, who: "you" | "spouse") {
@@ -854,10 +854,16 @@ function renderK401(p: Person | null, who: "you" | "spouse") {
   if (p.k401 > 0) {
     let text = `${who === "spouse" ? "401(k): " : ""}${money(p.k401)}/yr · ${money(p.k401 / per)} per paycheck`;
     const catchUp = p.k401Limit - Tax.FEDERAL.k401Limit;
-    if (on && p.k401 < p.k401Limit - 0.005) text += " · all of the pay left after benefits";
-    else if (on) text += ` · the ${Tax.TAX_YEAR} limit${catchUp > 0 ? `, with the ${usd0.format(catchUp)} catch-up for ${age !== undefined && age >= 60 && age <= 63 ? "ages 60 to 63" : "50 and older"}` : ""}`;
+    const forAge = age !== undefined && age >= 60 && age <= 63 ? "ages 60 to 63" : "50 and older";
+    const preTaxOnly = p.k401MaxLimit < p.k401Limit;
+    if (on && p.k401 < p.k401MaxLimit - 0.005) text += " · all of the pay left after benefits";
+    else if (on && preTaxOnly) text += " · the most you can put in pre-tax";
+    else if (on) text += ` · the ${Tax.TAX_YEAR} limit${catchUp > 0 ? `, with the ${usd0.format(catchUp)} catch-up for ${forAge}` : ""}`;
     else if (p.k401Capped) text += ` · capped at the ${usd0.format(p.k401Limit)} limit`;
     parts.push(`${text}.`);
+    if (on && preTaxOnly && p.k401 >= p.k401MaxLimit - 0.005) {
+      parts.push(`With pay over ${usd0.format(Tax.FEDERAL.k401RothCatchUpWages)}, the ${usd0.format(catchUp)} catch-up for ${forAge} can only go in as Roth, so it's left out.`);
+    }
   }
   if (!p.isRoth && p.k401Roth > 0.005) {
     parts.push(`${usd0.format(p.k401Roth)} of it goes in as Roth: with pay over ${usd0.format(Tax.FEDERAL.k401RothCatchUpWages)}, catch-up contributions have to be Roth.`);

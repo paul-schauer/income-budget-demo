@@ -111,13 +111,14 @@ test("maxing out on pay under the limit puts in all of the pay left after benefi
 });
 
 test("with wages over $150,000, a traditional 401(k)'s catch-up goes in as Roth", () => {
-  const r = Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55 });
+  // 20% of $200,000 asks for $40,000, capped at $32,500 for age 55.
+  const r = Tax.calculate({ ...plain, grossAnnual: 200000, k401Percent: 20, age: 55 });
   near(r.k401, 24500 + 8000);
   near(r.people[0].k401Roth, 8000);
   assert.equal(r.people[0].rothCatchUp, true);
   near(r.agi, 200000 - 24500); // only the base limit is pre-tax
   // The state starts from the same wages (Michigan: AGI less the $5,900 exemption, at 4.25%).
-  near(Tax.calculate({ ...plain, state: "MI", grossAnnual: 200000, k401Max: true, age: 55 }).stateTax, (200000 - 24500 - 5900) * 0.0425);
+  near(Tax.calculate({ ...plain, state: "MI", grossAnnual: 200000, k401Percent: 20, age: 55 }).stateTax, (200000 - 24500 - 5900) * 0.0425);
   // The rule starts above $150,000, and Section 125 benefits don't count as FICA wages.
   near(Tax.calculate({ ...plain, grossAnnual: 150000, k401Max: true, age: 55 }).agi, 150000 - 32500);
   near(Tax.calculate({ ...plain, grossAnnual: 155000, preTaxBenefits: 6000, k401Max: true, age: 55 }).people[0].k401Roth, 0);
@@ -129,9 +130,26 @@ test("with wages over $150,000, a traditional 401(k)'s catch-up goes in as Roth"
   near(roth.agi, 200000);
 });
 
+test("maxing out a traditional 401(k) with wages over $150,000 stops at the $24,500 pre-tax limit", () => {
+  const r = Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55 });
+  near(r.k401, 24500);
+  near(r.people[0].k401Roth, 0);
+  near(r.people[0].k401MaxLimit, 24500);
+  near(r.people[0].k401Limit, 24500 + 8000); // the catch-up is still allowed, just not pre-tax
+  near(r.agi, 200000 - 24500);
+  assert.equal(r.k401Capped, false);
+  near(Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 61 }).k401, 24500);
+  // At or under $150,000 the catch-up can be pre-tax, so maxing out includes it.
+  near(Tax.calculate({ ...plain, grossAnnual: 150000, k401Max: true, age: 55 }).people[0].k401MaxLimit, 24500 + 8000);
+});
+
 test("last year's wages decide the Roth catch-up when they're given", () => {
-  near(Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55, priorYearWages: 140000 }).people[0].k401Roth, 0);
-  near(Tax.calculate({ ...plain, grossAnnual: 140000, k401Max: true, age: 55, priorYearWages: 160000 }).people[0].k401Roth, 8000);
+  const over = Tax.calculate({ ...plain, grossAnnual: 200000, k401Percent: 20, age: 55, priorYearWages: 140000 });
+  near(over.people[0].k401Roth, 0);
+  near(Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55, priorYearWages: 140000 }).k401, 24500 + 8000);
+  // 25% of $140,000 asks for $35,000, capped at $32,500.
+  near(Tax.calculate({ ...plain, grossAnnual: 140000, k401Percent: 25, age: 55, priorYearWages: 160000 }).people[0].k401Roth, 8000);
+  near(Tax.calculate({ ...plain, grossAnnual: 140000, k401Max: true, age: 55, priorYearWages: 160000 }).k401, 24500);
 });
 
 test("k401Annual overrides the percentage", () => {

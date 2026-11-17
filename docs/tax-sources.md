@@ -26,9 +26,9 @@ Sources: [IRS: 401(k) limit increases to $24,500 for 2026](https://www.irs.gov/n
 | Figure | Value | Status |
 |---|---|---|
 | 401(k) elective deferral limit | $24,500 | Confirmed |
-| Catch-up, age 50+ | $8,000 (total $32,500) | Confirmed. `calculate()` takes `age` (age at the end of 2026); the app works it out from the year you were born. "Max it out" (`k401Max`) contributes the limit for your age. |
+| Catch-up, age 50+ | $8,000 (total $32,500) | Confirmed. `calculate()` takes `age` (age at the end of 2026); the app works it out from the year you were born. "Max it out" (`k401Max`) contributes the most allowed pre-tax for your age (`k401MaxLimit`). |
 | Catch-up, ages 60–63 (SECURE 2.0) | $11,250 (total $35,750) | Confirmed |
-| Roth catch-up wage threshold (`k401RothCatchUpWages`) | $150,000 of 2025 FICA wages from the same employer | Confirmed. Above it, the catch-up part of a traditional 401(k) (anything over $24,500) goes in as Roth, so it doesn't lower taxable wages. IRC §414(v)(7), added by SECURE 2.0 §603. |
+| Roth catch-up wage threshold (`k401RothCatchUpWages`) | $150,000 of 2025 FICA wages from the same employer | Confirmed. Above it, the catch-up part of a traditional 401(k) (anything over $24,500) goes in as Roth, so it doesn't lower taxable wages, and "Max it out" stops at $24,500. IRC §414(v)(7), added by SECURE 2.0 §603. |
 
 ## Payroll taxes
 

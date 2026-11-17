@@ -21,6 +21,7 @@ interface Worker {
   benefits: number;
   k401: number;
   k401Limit: number;
+  k401MaxLimit: number;
   isRoth: boolean;
   /** the part of k401 that goes in as Roth */
   k401Roth: number;
@@ -281,18 +282,21 @@ function earner(src: EarnerInput | null | undefined, role: "you" | "spouse"): Wo
   const benefits = Math.min(num(src.preTaxBenefits), gross);
   const k401Limit = k401LimitFor(src.age);
   const hasAnnual = src.k401Annual != null && src.k401Annual !== "" && Number.isFinite(Number(src.k401Annual));
-  const max = !hasAnnual && src.k401Max === true;
-  const k401Requested = hasAnnual ? num(src.k401Annual) : max ? k401Limit : gross * Math.min(num(src.k401Percent), 100) / 100;
-  const k401 = Math.min(k401Requested, k401Limit, gross - benefits);
   const isRoth = src.k401Type === "roth";
   const ficaWages = gross - benefits;
   // A high earner's catch-up (the part over the base limit) can't be pre-tax. This year's wages stand
   // in for last year's unless the caller knows them.
   const hasPrior = src.priorYearWages != null && Number.isFinite(Number(src.priorYearWages));
   const rothCatchUp = (hasPrior ? num(src.priorYearWages) : ficaWages) > FEDERAL.k401RothCatchUpWages;
+  // Maxing out a traditional 401(k) means the most that can go in pre-tax, so a high earner stops at
+  // the base limit instead of adding a catch-up that would have to be Roth.
+  const k401MaxLimit = !isRoth && rothCatchUp ? Math.min(k401Limit, FEDERAL.k401Limit) : k401Limit;
+  const max = !hasAnnual && src.k401Max === true;
+  const k401Requested = hasAnnual ? num(src.k401Annual) : max ? k401MaxLimit : gross * Math.min(num(src.k401Percent), 100) / 100;
+  const k401 = Math.min(k401Requested, k401Limit, gross - benefits);
   const k401Roth = isRoth ? k401 : rothCatchUp ? Math.max(0, k401 - FEDERAL.k401Limit) : 0;
   return {
-    role, gross, benefits, k401, k401Limit, isRoth, k401Roth, rothCatchUp,
+    role, gross, benefits, k401, k401Limit, k401MaxLimit, isRoth, k401Roth, rothCatchUp,
     // Maxing out asks for the limit, so pay below it isn't a cap.
     k401Capped: !max && k401Requested > k401 + 0.005,
     ficaWages,
@@ -466,8 +470,9 @@ function withholdingCheck(h: Household) {
  * income after the tax it causes. `withholding` has the difference: what's due or refunded at filing.
  * `people` has each earner's paycheck: their own FICA, payroll deductions and federal withholding,
  * and a wage-weighted share of the household's state and local tax.
- * 401(k): k401Annual, else the limit for your age when k401Max is set, else k401Percent of pay. With
- * wages over FEDERAL.k401RothCatchUpWages, the catch-up part of a traditional 401(k) goes in as Roth.
+ * 401(k): k401Annual, else the most allowed pre-tax for your age when k401Max is set, else k401Percent of
+ * pay. With wages over FEDERAL.k401RothCatchUpWages, the catch-up part of a traditional 401(k) goes in as
+ * Roth, so maxing one out stops at the base limit.
  */
 export function calculate(input: TaxInput): TaxResult {
   input = input || {};
@@ -502,7 +507,7 @@ export function calculate(input: TaxInput): TaxResult {
     const gap = (wagesOnly.federal + wagesOnly.additionalMedicare) * share - job.federal - job.medicare;
     return {
       role: p.role, gross: p.gross, benefits: p.benefits, k401: p.k401, k401Capped: p.k401Capped,
-      k401Limit: p.k401Limit, isRoth: p.isRoth, k401Roth: p.k401Roth, rothCatchUp: p.rothCatchUp,
+      k401Limit: p.k401Limit, k401MaxLimit: p.k401MaxLimit, isRoth: p.isRoth, k401Roth: p.k401Roth, rothCatchUp: p.rothCatchUp,
       federal: wagesOnly.federal * share,
       state: wagesOnly.stateTax * share, local: wagesOnly.localTax * share, incomeTax,
       socialSecurity: p.socialSecurity, medicare, payroll: p.payroll,
