@@ -268,7 +268,7 @@ function renderOut(ctx: AppContext, out: HTMLElement) {
       <tfoot><tr><td>Take-home pay</td><td class="num">${p(now.net)}</td><td class="num">${p(next.net)}</td><td class="num">${signed(diff / per)}</td></tr></tfoot>
     </table>
     <div class="cmp-box">${notes}</div>
-    <p class="fine">Keeps your filing status, pay frequency, ${now.state.name ? `${esc(now.state.name)} ` : ""}state and local tax, 401(k) %, benefits, dependents and W-4 extras${household ? ", spouse's pay and other income" : ""} as they are. Estimate only, not tax advice.</p>`;
+    <p class="fine">Keeps your filing status, pay frequency, ${now.state.name ? `${esc(now.state.name)} ` : ""}state and local tax, ${ctx.state.income.k401Max ? "maxed-out 401(k)" : "401(k) %"}, benefits, dependents and W-4 extras${household ? ", spouse's pay and other income" : ""} as they are. Estimate only, not tax advice.</p>`;
 }
 
 function update() {

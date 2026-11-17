@@ -88,6 +88,52 @@ test("catch-up contributions raise the 401(k) limit by age", () => {
   assert.equal(noAge.k401Limit, 24500);
 });
 
+// No state, single: isolates the federal math.
+const plain: TaxInput = { grossAnnual: 120000, filingStatus: "single", k401Percent: 3, k401Type: "traditional", preTaxBenefits: 0, state: "" };
+
+test("maxing out the 401(k) contributes the limit for your age, all of it pre-tax", () => {
+  const r = Tax.calculate({ ...plain, k401Max: true });
+  near(r.k401, 24500);
+  near(r.agi, 120000 - 24500);
+  assert.equal(r.k401Capped, false);
+  near(Tax.calculate({ ...plain, k401Max: true, age: 52 }).k401, 24500 + 8000);
+  near(Tax.calculate({ ...plain, k401Max: true, age: 52 }).agi, 120000 - (24500 + 8000));
+  near(Tax.calculate({ ...plain, k401Max: true, age: 61 }).k401, 24500 + 11250);
+  near(Tax.calculate({ ...plain, k401Max: true, age: 64 }).k401, 24500 + 8000);
+});
+
+test("maxing out on pay under the limit puts in all of the pay left after benefits", () => {
+  const r = Tax.calculate({ ...plain, grossAnnual: 20000, preTaxBenefits: 2000, k401Max: true });
+  near(r.k401, 20000 - 2000);
+  assert.equal(r.k401Capped, false);
+  // A dollar amount still wins.
+  near(Tax.calculate({ ...plain, k401Max: true, k401Annual: 5000 }).k401, 5000);
+});
+
+test("with wages over $150,000, a traditional 401(k)'s catch-up goes in as Roth", () => {
+  const r = Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55 });
+  near(r.k401, 24500 + 8000);
+  near(r.people[0].k401Roth, 8000);
+  assert.equal(r.people[0].rothCatchUp, true);
+  near(r.agi, 200000 - 24500); // only the base limit is pre-tax
+  // The state starts from the same wages (Michigan: AGI less the $5,900 exemption, at 4.25%).
+  near(Tax.calculate({ ...plain, state: "MI", grossAnnual: 200000, k401Max: true, age: 55 }).stateTax, (200000 - 24500 - 5900) * 0.0425);
+  // The rule starts above $150,000, and Section 125 benefits don't count as FICA wages.
+  near(Tax.calculate({ ...plain, grossAnnual: 150000, k401Max: true, age: 55 }).agi, 150000 - 32500);
+  near(Tax.calculate({ ...plain, grossAnnual: 155000, preTaxBenefits: 6000, k401Max: true, age: 55 }).people[0].k401Roth, 0);
+  // Under 50 there's no catch-up to move.
+  near(Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true }).people[0].k401Roth, 0);
+  // A Roth 401(k) is all Roth anyway.
+  const roth = Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55, k401Type: "roth" });
+  near(roth.people[0].k401Roth, 32500);
+  near(roth.agi, 200000);
+});
+
+test("last year's wages decide the Roth catch-up when they're given", () => {
+  near(Tax.calculate({ ...plain, grossAnnual: 200000, k401Max: true, age: 55, priorYearWages: 140000 }).people[0].k401Roth, 0);
+  near(Tax.calculate({ ...plain, grossAnnual: 140000, k401Max: true, age: 55, priorYearWages: 160000 }).people[0].k401Roth, 8000);
+});
+
 test("k401Annual overrides the percentage", () => {
   const r = Tax.calculate({ ...base, k401Annual: 6000 });
   near(r.k401, 6000);

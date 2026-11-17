@@ -22,10 +22,13 @@ interface Worker {
   k401: number;
   k401Limit: number;
   isRoth: boolean;
+  /** the part of k401 that goes in as Roth */
+  k401Roth: number;
+  rothCatchUp: boolean;
   k401Capped: boolean;
   /** gross less Section 125 benefits */
   ficaWages: number;
-  /** ficaWages less traditional 401(k) */
+  /** ficaWages less pre-tax 401(k) */
   fedWages: number;
   extraWithholding: number;
   overtimePremium: number;
@@ -63,6 +66,9 @@ export const FEDERAL: TaxApi["FEDERAL"] = {
   k401Limit: 24500,
   k401CatchUp: 8000,         // age 50+
   k401CatchUp60to63: 11250,  // SECURE 2.0 higher catch-up for ages 60-63
+  // IRC 414(v)(7) (SECURE 2.0 §603): with more than this in last year's FICA wages from the employer,
+  // catch-up contributions must go in as Roth.
+  k401RothCatchUpWages: 150000,
   // Pub. 15 (2026): optional flat rate on supplemental wages; mandatory rate above $1M for the year.
   supplementalRate: 0.22,
   supplementalRateOver1M: 0.37,
@@ -275,15 +281,22 @@ function earner(src: EarnerInput | null | undefined, role: "you" | "spouse"): Wo
   const benefits = Math.min(num(src.preTaxBenefits), gross);
   const k401Limit = k401LimitFor(src.age);
   const hasAnnual = src.k401Annual != null && src.k401Annual !== "" && Number.isFinite(Number(src.k401Annual));
-  const k401Requested = hasAnnual ? num(src.k401Annual) : gross * Math.min(num(src.k401Percent), 100) / 100;
+  const max = !hasAnnual && src.k401Max === true;
+  const k401Requested = hasAnnual ? num(src.k401Annual) : max ? k401Limit : gross * Math.min(num(src.k401Percent), 100) / 100;
   const k401 = Math.min(k401Requested, k401Limit, gross - benefits);
   const isRoth = src.k401Type === "roth";
   const ficaWages = gross - benefits;
+  // A high earner's catch-up (the part over the base limit) can't be pre-tax. This year's wages stand
+  // in for last year's unless the caller knows them.
+  const hasPrior = src.priorYearWages != null && Number.isFinite(Number(src.priorYearWages));
+  const rothCatchUp = (hasPrior ? num(src.priorYearWages) : ficaWages) > FEDERAL.k401RothCatchUpWages;
+  const k401Roth = isRoth ? k401 : rothCatchUp ? Math.max(0, k401 - FEDERAL.k401Limit) : 0;
   return {
-    role, gross, benefits, k401, k401Limit, isRoth,
-    k401Capped: k401Requested > k401 + 0.005,
+    role, gross, benefits, k401, k401Limit, isRoth, k401Roth, rothCatchUp,
+    // Maxing out asks for the limit, so pay below it isn't a cap.
+    k401Capped: !max && k401Requested > k401 + 0.005,
     ficaWages,
-    fedWages: ficaWages - (isRoth ? 0 : k401),
+    fedWages: ficaWages - (k401 - k401Roth),
     extraWithholding: num(src.extraWithholdingAnnual),
     overtimePremium: num(src.overtimePremium),
     extraWages: 0, // from a second W-2 job
@@ -362,7 +375,7 @@ function core(input: TaxInput) {
     status,
     filers: married ? 2 : 1,
     dependents: dependents + otherDependents,
-    earners: people.map((p) => ({ wages: p.allWages, k401Trad: p.isRoth ? 0 : p.k401 })),
+    earners: people.map((p) => ({ wages: p.allWages, k401Trad: p.k401 - p.k401Roth })),
     agi,
     federalTaxable,
     federalStandardDeduction: standardDeduction,
@@ -429,7 +442,7 @@ function withholdingCheck(h: Household) {
   const owed = h.federal + h.additionalMedicare;
   return {
     /** withheld from each of h.people's own jobs, in order */
-    byPerson: jobs.slice(0, h.people.length).map((j) => j.federal + j.medicare),
+    byPerson: jobs.slice(0, h.people.length),
     withheld: owed - federalGap - medicareGap,
     owed, federalGap, medicareGap,
     gap: federalGap + medicareGap,
@@ -439,11 +452,12 @@ function withholdingCheck(h: Household) {
 /**
  * Input — your pay (top level, as before):
  *   grossAnnual, filingStatus (single | mfj | mfs | hoh), k401Percent, k401Type (traditional | roth),
- *   k401Annual?, age?, preTaxBenefits, dependents, otherDependents, extraWithholdingAnnual, overtimePremium?
+ *   k401Annual?, k401Max?, age?, priorYearWages?, preTaxBenefits, dependents, otherDependents,
+ *   extraWithholdingAnnual, overtimePremium?
  * Household:
  *   state: two-letter code ("" = none chosen; omitted = Michigan, for older callers)
  *   local: { id, resident, customRate }   (older callers: cityId / cityResident)
- *   spouse: { grossAnnual, k401Percent, k401Type, preTaxBenefits, extraWithholdingAnnual, age }  (joint returns only)
+ *   spouse: { grossAnnual, k401Percent, k401Type, k401Max, preTaxBenefits, extraWithholdingAnnual, age }  (joint returns only)
  *   otherIncome: [{ type: "w2" | "self" | "taxable" | "nontaxable", annual, owner: "you" | "spouse" }]
  *   withholdShortfall: true to withhold extra equal to the withholding shortfall (replaces extraWithholdingAnnual)
  *
@@ -452,6 +466,8 @@ function withholdingCheck(h: Household) {
  * income after the tax it causes. `withholding` has the difference: what's due or refunded at filing.
  * `people` has each earner's paycheck: their own FICA, payroll deductions and federal withholding,
  * and a wage-weighted share of the household's state and local tax.
+ * 401(k): k401Annual, else the limit for your age when k401Max is set, else k401Percent of pay. With
+ * wages over FEDERAL.k401RothCatchUpWages, the catch-up part of a traditional 401(k) goes in as Roth.
  */
 export function calculate(input: TaxInput): TaxResult {
   input = input || {};
@@ -482,12 +498,17 @@ export function calculate(input: TaxInput): TaxResult {
     const incomeTax = shared * share;
     const medicare = p.medicare + wagesOnly.additionalMedicare * share;
     const taxes = incomeTax + p.socialSecurity + medicare + p.payroll;
-    const gap = (wagesOnly.federal + wagesOnly.additionalMedicare) * share - wagesCheck.byPerson[i];
+    const job = wagesCheck.byPerson[i];
+    const gap = (wagesOnly.federal + wagesOnly.additionalMedicare) * share - job.federal - job.medicare;
     return {
       role: p.role, gross: p.gross, benefits: p.benefits, k401: p.k401, k401Capped: p.k401Capped,
-      k401Limit: p.k401Limit, isRoth: p.isRoth, federal: wagesOnly.federal * share,
+      k401Limit: p.k401Limit, isRoth: p.isRoth, k401Roth: p.k401Roth, rothCatchUp: p.rothCatchUp,
+      federal: wagesOnly.federal * share,
       state: wagesOnly.stateTax * share, local: wagesOnly.localTax * share, incomeTax,
-      socialSecurity: p.socialSecurity, medicare, payroll: p.payroll, taxes,
+      socialSecurity: p.socialSecurity, medicare, payroll: p.payroll,
+      payrollItems: (wagesOnly.st.payroll[i] || []).map((x) => ({ ...x })),
+      taxes,
+      withheld: { federal: job.federal, medicare: p.medicare + job.medicare },
       extraWithholding: extraBy[i],
       net: p.gross - p.benefits - p.k401 - taxes + gap - extraBy[i],
     };

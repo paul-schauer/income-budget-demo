@@ -34,7 +34,7 @@ export interface BonusResult {
   amount: number;
   k401: number;
   isRoth: boolean;
-  /** the bonus less a traditional 401(k) deferral: what income tax is withheld on */
+  /** the bonus less its pre-tax 401(k) deferral: what income tax is withheld on */
   incomeWages: number;
   federal: number;
   socialSecurity: number;

@@ -26,9 +26,9 @@ Sources: [IRS: 401(k) limit increases to $24,500 for 2026](https://www.irs.gov/n
 | Figure | Value | Status |
 |---|---|---|
 | 401(k) elective deferral limit | $24,500 | Confirmed |
-| Catch-up, age 50+ | $8,000 (total $32,500) | Confirmed. Added as an optional `age` input to `calculate()` and `Tax.k401LimitFor(age)`. There's no UI for it. |
+| Catch-up, age 50+ | $8,000 (total $32,500) | Confirmed. `calculate()` takes `age` (age at the end of 2026); the app works it out from the year you were born. "Max it out" (`k401Max`) contributes the limit for your age. |
 | Catch-up, ages 60–63 (SECURE 2.0) | $11,250 (total $35,750) | Confirmed |
-| Roth catch-up wage threshold | $150,000 of 2025 FICA wages from the same employer | Confirmed, but not modeled. If your wages are above it, your catch-up must go in as Roth. |
+| Roth catch-up wage threshold (`k401RothCatchUpWages`) | $150,000 of 2025 FICA wages from the same employer | Confirmed. Above it, the catch-up part of a traditional 401(k) (anything over $24,500) goes in as Roth, so it doesn't lower taxable wages. IRC §414(v)(7), added by SECURE 2.0 §603. |
 
 ## Payroll taxes
 
@@ -132,5 +132,5 @@ Every city's nonresident rate is half its resident rate, as the Uniform City Inc
 - Michigan-taxable wages start from federal wages. Other Michigan subtractions (retirement income and similar) are left out.
 - Cities get the same number of exemptions as Michigan. Extra city exemptions for age 65+, blind or disabled are left out.
 - The bonus estimator assumes the employer uses the flat supplemental rate and pays the bonus on a separate check, not the aggregate method.
-- The Roth catch-up rule for people with 2025 wages over $150,000 isn't modeled.
+- The Roth catch-up rule uses this year's FICA wages from the job in place of 2025's, unless a caller passes `priorYearWages`. The bonus and overtime estimates pass this year's regular wages, so extra pay doesn't change the test. It assumes your plan offers Roth contributions; a plan without them can't take a high earner's catch-up at all.
 - The withholding check assumes nobody checks the W-4 step 2 box or fills in step 4(a) or 4(b), so the overtime deduction isn't reflected in withholding. It ignores state withholding and the refund of excess Social Security when one person's two jobs pass the wage base.

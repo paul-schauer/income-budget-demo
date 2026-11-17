@@ -123,6 +123,16 @@
             </div>
           </div>
         </div>
+        <div class="row">
+          <div class="field">
+            <label for="birthYear">Year you were born</label>
+            <input id="birthYear" data-field="birthYear" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="e.g. 1985">
+          </div>
+          <div class="field">
+            <span class="label">401(k) limit</span>
+            <label class="check-box"><input type="checkbox" id="k401Max" aria-describedby="k401Hint"> Max it out</label>
+          </div>
+        </div>
         <p class="hint" id="k401Hint"></p>
 
         <div class="row">
@@ -179,6 +189,16 @@
             <div class="field">
               <label for="spouseBenefits">Pre-tax benefits / yr</label>
               <div class="money"><span>$</span><input id="spouseBenefits" data-sfield="preTaxBenefits" inputmode="decimal" autocomplete="off" placeholder="0"></div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="spouseBirthYear">Year born</label>
+              <input id="spouseBirthYear" data-sfield="birthYear" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="e.g. 1985">
+            </div>
+            <div class="field">
+              <span class="label">401(k) limit</span>
+              <label class="check-box"><input type="checkbox" id="spouseK401Max" aria-describedby="spouseHint"> Max it out</label>
             </div>
           </div>
           <p class="hint" id="spouseHint"></p>
@@ -252,6 +272,10 @@
             <p class="fine">Your data is saved in this browser. Nothing is sent anywhere unless you sign in to sync.</p>
           </div>
           <div id="resultsBody">
+          <div class="seg small" role="radiogroup" aria-label="Whose take-home to show" id="payViewSeg" hidden>
+            <button type="button" data-value="combined">Combined</button>
+            <button type="button" data-value="mine">Just my paycheck</button>
+          </div>
           <div class="hero">
             <div>
               <div class="eyebrow" id="takeHomeLabel">Take-home per paycheck</div>

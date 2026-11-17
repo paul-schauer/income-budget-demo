@@ -34,10 +34,13 @@ export function bonusEstimate(o: BonusInput): BonusResult {
   const you = base.people[0];
   const isRoth = input.k401Type === "roth";
 
-  const pct = Math.min(num(input.k401Percent), 100) / 100;
+  // Maxing out defers all of the bonus until the year's limit is reached.
+  const pct = input.k401Max ? 1 : Math.min(num(input.k401Percent), 100) / 100;
   const room = Math.max(0, you.k401Limit - you.k401);
   const k401 = o.apply401k === false ? 0 : Math.min(amount * pct, room);
-  const incomeWages = amount - (isRoth ? 0 : k401);
+  // A high earner's catch-up goes in as Roth, so only the room under the base limit is pre-tax.
+  const preTaxRoom = isRoth ? 0 : you.rothCatchUp ? Math.max(0, Tax.FEDERAL.k401Limit - (you.k401 - you.k401Roth)) : Infinity;
+  const incomeWages = amount - Math.min(k401, preTaxRoom);
 
   // Withholding on the bonus check.
   const federal = Tax.supplementalFederalWithholding(incomeWages, o.priorSupplemental);
@@ -47,7 +50,9 @@ export function bonusEstimate(o: BonusInput): BonusResult {
   const additionalMedicare = (Math.max(0, ytd + amount - addl) - Math.max(0, ytd - addl)) * Tax.FICA.additionalMedicareRate;
   const medicare = amount * Tax.FICA.medicareRate + additionalMedicare;
   // Year end, marginal method: the return with the bonus minus the return without it.
-  const after = Tax.calculate(Object.assign({}, input, { grossAnnual: you.gross + amount, k401Annual: you.k401 + k401 }));
+  // Last year's wages don't change with the bonus, so the Roth catch-up test stays as it was.
+  const priorYearWages = input.priorYearWages ?? you.gross - you.benefits;
+  const after = Tax.calculate(Object.assign({}, input, { grossAnnual: you.gross + amount, k401Annual: you.k401 + k401, priorYearWages }));
 
   // State withholding at the state's supplemental rate (named `michigan` for older callers).
   const michigan = base.state.code ? incomeWages * base.state.supplementalRate : 0;
@@ -105,8 +110,10 @@ export function overtimeEstimate(o: OvertimeInput): OvertimeResult {
 
   const base = Tax.calculate(input);
   const yourGross = base.people[0].gross;
-  const withOt = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual }));
-  const withDeduction = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual, overtimePremium: premiumAnnual }));
+  // Last year's wages don't change with overtime, so the Roth catch-up test stays as it was.
+  const priorYearWages = input.priorYearWages ?? yourGross - base.people[0].benefits;
+  const withOt = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual, priorYearWages }));
+  const withDeduction = Tax.calculate(Object.assign({}, input, { grossAnnual: yourGross + payAnnual, overtimePremium: premiumAnnual, priorYearWages }));
 
   // Federal tax (extra withholding included) and Medicare as paychecks take them, like take-home.
   const fromPay = (r: TaxResult) => ({ ...r, federal: r.withholding.federal + r.extraWithholding, medicare: r.withholding.medicare });
@@ -293,7 +300,7 @@ function renderBonus(ctx: AppContext, out: HTMLElement) {
   const fedNote = b.federalRate > Tax.FEDERAL.supplementalRate + 0.0001 ? "22% / 37% over $1M" : "22% flat";
   const rows = [
     row("Bonus", b.amount),
-    b.k401 > 0 && row(b.isRoth ? "Roth 401(k)" : "401(k)", -b.k401, { minus: true, note: `${+Number(income.k401Percent).toFixed(2)}%` }),
+    b.k401 > 0 && row(b.isRoth ? "Roth 401(k)" : "401(k)", -b.k401, { minus: true, note: income.k401Max ? "max" : `${+Number(income.k401Percent).toFixed(2)}%` }),
     row("Federal withholding", -b.federal, { minus: true, note: fedNote }),
     row("Social Security", -b.socialSecurity, { minus: true, note: b.socialSecurity < b.amount * Tax.FICA.socialSecurityRate - 0.005 ? "wage cap" : "6.2%" }),
     row("Medicare", -b.medicare, { minus: true, note: b.medicare > b.amount * Tax.FICA.medicareRate + 0.005 ? "incl. 0.9%" : "1.45%" }),

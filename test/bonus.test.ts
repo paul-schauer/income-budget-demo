@@ -56,6 +56,28 @@ test("bonus: 401(k) stops at the annual limit", () => {
   near(some.k401, 24500 - 23000);
 });
 
+test("bonus: maxing out the 401(k) defers the bonus until the limit is reached", () => {
+  // $20,000 of pay all goes in, leaving $4,500 of room.
+  const b = B.bonusEstimate({ taxInput: { ...single60k, grossAnnual: 20000, k401Max: true }, amount: 10000, ytdWages: 0 });
+  near(b.k401, 24500 - 20000);
+  near(b.federal, 0.22 * (10000 - 4500));
+  near(B.bonusEstimate({ taxInput: { ...single60k, k401Max: true }, amount: 10000, ytdWages: 0 }).k401, 0);
+});
+
+test("bonus: a high earner's catch-up deferral isn't pre-tax, and the bonus doesn't count as last year's wages", () => {
+  // $200,000 at 10%, age 55: $20,000 deferred, so $4,500 is left under the base limit.
+  const high = B.bonusEstimate({ taxInput: { ...single60k, grossAnnual: 200000, k401Percent: 10, age: 55 }, amount: 100000, ytdWages: 0 });
+  near(high.k401, 10000);
+  near(high.incomeWages, 100000 - 4500);
+  near(high.federal, 0.22 * (100000 - 4500));
+  // $140,000 at 20%: $28,000 deferred, $4,500 of room to the $32,500 limit, all of it pre-tax.
+  const under = B.bonusEstimate({ taxInput: { ...single60k, grossAnnual: 140000, k401Percent: 20, age: 55 }, amount: 100000, ytdWages: 0 });
+  near(under.k401, 4500);
+  near(under.incomeWages, 100000 - 4500);
+  // Year end: taxable income goes from 140,000 - 28,000 - 16,100 to 240,000 - 32,500 - 16,100.
+  near(under.actual.federal, (105700 - 95900) * 0.22 + (191400 - 105700) * 0.24);
+});
+
 test("bonus: Social Security stops at the $184,500 wage base", () => {
   near(B.bonusEstimate({ taxInput: single60k, amount: 10000, ytdWages: 180000 }).socialSecurity, 4500 * 0.062);
   near(B.bonusEstimate({ taxInput: single60k, amount: 10000, ytdWages: 190000 }).socialSecurity, 0);
