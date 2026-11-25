@@ -143,8 +143,17 @@ export interface EarnerInput {
   grossAnnual?: number;
   k401Percent?: number;
   k401Type?: "traditional" | "roth" | string;
+  /** dollars a year; wins over k401Max and k401Percent */
   k401Annual?: number | string | null;
+  /**
+   * contribute the most allowed (k401MaxLimit on the result), or all of your pay after benefits if that's less.
+   * For a traditional 401(k) that's the most that can go in pre-tax.
+   */
+  k401Max?: boolean;
+  /** age at the end of the tax year: sets the catch-up */
   age?: number;
+  /** FICA wages from this employer last year, which decide whether catch-ups must be Roth. Defaults to this year's. */
+  priorYearWages?: number;
   preTaxBenefits?: number;
   extraWithholdingAnnual?: number;
   overtimePremium?: number;
@@ -180,8 +189,18 @@ export interface Person {
   benefits: number;
   k401: number;
   k401Capped: boolean;
+  /** the elective-deferral limit, catch-up for your age included */
   k401Limit: number;
+  /**
+   * what maxing out contributes: k401Limit, except a traditional 401(k) with wages over the Roth catch-up
+   * threshold stops at the base limit, the most that can go in pre-tax
+   */
+  k401MaxLimit: number;
   isRoth: boolean;
+  /** the part of k401 that goes in as Roth: all of a Roth 401(k), or a catch-up that must be Roth */
+  k401Roth: number;
+  /** wages over FEDERAL.k401RothCatchUpWages, so any catch-up must go in as Roth */
+  rothCatchUp: boolean;
   federal: number;
   state: number;
   local: number;
@@ -189,7 +208,14 @@ export interface Person {
   socialSecurity: number;
   medicare: number;
   payroll: number;
+  /** this person's state payroll deductions (disability insurance, paid leave, ...) */
+  payrollItems: PayrollAmount[];
   taxes: number;
+  /**
+   * Federal income tax and Medicare as this person's employer withholds them, before extra withholding.
+   * net = gross - benefits - k401 - withheld.federal - withheld.medicare - socialSecurity - state - local - payroll - extraWithholding
+   */
+  withheld: { federal: number; medicare: number };
   /** extra withholding (W-4 step 4(c)) from this person's pay */
   extraWithholding: number;
   /** what this person's paychecks pay: federal tax as their employer withholds it, less extra withholding */
@@ -292,6 +318,7 @@ export interface TaxApi {
     k401Limit: number;
     k401CatchUp: number;
     k401CatchUp60to63: number;
+    k401RothCatchUpWages: number;
     supplementalRate: number;
     supplementalRateOver1M: number;
     supplementalMandatoryThreshold: number;

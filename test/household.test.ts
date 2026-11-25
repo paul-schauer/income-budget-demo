@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as Tax from "../src/tax/tax";
-import type { EarnerInput, TaxInput, TaxResult } from "../src/tax/types";
+import type { EarnerInput, Person, TaxInput, TaxResult } from "../src/tax/types";
 
 const near = (actual: number, expected: number, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ${expected}, got ${actual}`);
@@ -132,4 +132,20 @@ test("Michigan state and city tax still work through the state engine", () => {
   near(r.localTax, (80000 + 48000 - 2 * 600) * 0.024);
   assert.equal(r.state.name, "Michigan");
   assert.equal(r.local.name, "Detroit");
+});
+
+test("each paycheck's own lines add up to its take-home", () => {
+  const lines = (p: Person) => p.gross - p.benefits - p.k401 - p.withheld.federal - p.withheld.medicare -
+    p.socialSecurity - p.state - p.local - p.payroll - p.extraWithholding;
+  // California, so each spouse has their own payroll deductions too.
+  const r = Tax.calculate({ ...you, state: "CA", spouse, extraWithholdingAnnual: 1200 });
+  for (const p of r.people) near(lines(p), p.net);
+  // Each employer withholds on its own job: $76,000 and $48,000 of wages on the joint schedule.
+  near(r.people[0].withheld.federal, 2480 + (76000 - 32200 - 24800) * 0.12);
+  near(r.people[1].withheld.federal, (48000 - 32200) * 0.10);
+  near(r.people[0].withheld.medicare, 80000 * 0.0145);
+  near(r.people[1].withheld.medicare, 48000 * 0.0145);
+  near(r.people[0].withheld.federal + r.people[1].withheld.federal, r.withholding.federal);
+  for (const p of r.people) near(p.payrollItems.reduce((s, x) => s + x.amount, 0), p.payroll);
+  near(r.people[0].payroll + r.people[1].payroll, r.payroll);
 });

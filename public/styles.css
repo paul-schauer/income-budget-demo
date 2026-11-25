@@ -201,6 +201,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .withhold-check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 600; cursor: pointer; }
 .withhold-check input { width: 18px; height: 18px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
 input:disabled { color: var(--muted); cursor: not-allowed; }
+/* A checkbox in a form row, as tall as the inputs beside it ("Max it out" for the 401(k)). */
+.field .check-box { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--ink); font-size: 14px; cursor: pointer; }
+.check-box input { width: 18px; height: 18px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
 
 .raise { background: var(--accent-soft); color: var(--ink); border-radius: 12px; padding: 10px 14px; font-size: 13px; max-width: 260px; }
 .raise strong { color: var(--accent); }

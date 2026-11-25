@@ -20,6 +20,10 @@ export interface Income {
   nextPayday: string;
   k401Percent: number;
   k401Type: "traditional" | "roth";
+  /** contribute the 401(k) limit for your age instead of k401Percent */
+  k401Max: boolean;
+  /** for the 401(k) catch-up; 0 = not entered */
+  birthYear: number;
   preTaxBenefits: number;
   dependents: number;
   otherDependents: number;
@@ -40,6 +44,9 @@ export interface Spouse {
   payPeriod: PayPeriod;
   k401Percent: number;
   k401Type: "traditional" | "roth";
+  k401Max: boolean;
+  /** 0 = not entered */
+  birthYear: number;
   preTaxBenefits: number;
 }
 

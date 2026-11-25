@@ -1,5 +1,7 @@
 /*
  * Core app: pay inputs, take-home results, budget items, tabs, persistence.
+ * With a spouse or other income, the results card switches between the combined household and just
+ * your paycheck (a per-browser choice, like the open tab).
  *
  * Feature modules (calendar, goals, spending, sync, ...) plug in through
  * App.register(). See the "Module API" section below. main.ts registers them, then calls start().
@@ -7,7 +9,7 @@
  */
 import * as Tax from "../tax/tax";
 import * as StateTax from "../tax/state-tax";
-import type { IncomeType, Period, StateLocal, TaxInput, TaxResult } from "../tax/types";
+import type { IncomeType, Period, Person, StateLocal, TaxInput, TaxResult } from "../tax/types";
 import type {
   AppApi, AppContext, AppEvent, AppModule, AppState, BaseContext, BudgetItem, BudgetLine,
   Category, CategoryId, ExtraIncome, Income, Spouse, Tab,
@@ -19,6 +21,7 @@ interface EventArg { save: AppState; render: AppContext }
 const { PERIODS, PAY_PERIODS, CITIES, FILING_STATUSES } = Tax;
 const STORAGE_KEY = "incomebudget:v1";
 const TAB_KEY = "incomebudget:tab";
+const PAY_VIEW_KEY = "incomebudget:payview";
 const RECURRENCES: Period[] = ["weekly", "biweekly", "semimonthly", "monthly", "quarterly", "annual"];
 const VIEW_PERIODS: Period[] = ["weekly", "biweekly", "semimonthly", "monthly", "annual"];
 const TABS: Tab[] = ["paycheck", "budget", "calendar", "goals", "spending"];
@@ -48,6 +51,8 @@ const DEFAULT_INCOME: Income = {
   nextPayday: "",
   k401Percent: 0,
   k401Type: "traditional",
+  k401Max: false,     // contribute the limit for your age instead of k401Percent
+  birthYear: 0,       // 0 until entered; sets the 401(k) catch-up
   preTaxBenefits: 0,
   dependents: 0,
   otherDependents: 0,
@@ -68,6 +73,8 @@ const DEFAULT_SPOUSE: Spouse = {
   payPeriod: "biweekly",
   k401Percent: 0,
   k401Type: "traditional",
+  k401Max: false,
+  birthYear: 0,
   preTaxBenefits: 0,
 };
 
@@ -219,6 +226,10 @@ function sanitize(input: unknown): AppState {
   if (typeof s.income.localId !== "string") s.income.localId = "none";
   s.income.localResident = s.income.localResident !== false;
   s.income.withholdShortfall = s.income.withholdShortfall === true;
+  for (const who of [s.income, s.spouse]) {
+    who.k401Max = who.k401Max === true;
+    who.birthYear = ageOf(who.birthYear) === undefined ? 0 : Number(who.birthYear);
+  }
   if (!PAY_PERIODS.includes(s.spouse.payPeriod)) s.spouse.payPeriod = "biweekly";
   if (!["salary", "hourly"].includes(s.spouse.mode)) s.spouse.mode = "salary";
   if (!["traditional", "roth"].includes(s.spouse.k401Type)) s.spouse.k401Type = "traditional";
@@ -295,6 +306,12 @@ function spouseGross() {
 
 const isJoint = () => state.income.filingStatus === "mfj";
 
+/** Age at the end of the tax year, which is what the 401(k) catch-up goes by; undefined for a missing or unlikely year. */
+function ageOf(birthYear: unknown): number | undefined {
+  const y = Number(birthYear);
+  return Number.isInteger(y) && y >= 1900 && y <= Tax.TAX_YEAR ? Tax.TAX_YEAR - y : undefined;
+}
+
 function taxInput(): TaxInput {
   const inc = state.income;
   const sp = state.spouse;
@@ -303,6 +320,8 @@ function taxInput(): TaxInput {
     filingStatus: inc.filingStatus,
     k401Percent: Number(inc.k401Percent) || 0,
     k401Type: inc.k401Type,
+    k401Max: inc.k401Max,
+    age: ageOf(inc.birthYear),
     preTaxBenefits: Number(inc.preTaxBenefits) || 0,
     dependents: Number(inc.dependents) || 0,
     otherDependents: Number(inc.otherDependents) || 0,
@@ -314,6 +333,8 @@ function taxInput(): TaxInput {
       grossAnnual: spouseGross(),
       k401Percent: Number(sp.k401Percent) || 0,
       k401Type: sp.k401Type,
+      k401Max: sp.k401Max,
+      age: ageOf(sp.birthYear),
       preTaxBenefits: Number(sp.preTaxBenefits) || 0,
     } : null,
     otherIncome: state.extraIncome.map((x) => ({
@@ -386,6 +407,16 @@ function setupTabs() {
 
 // ---------- Inputs ----------
 
+/**
+ * Whether a number field's value is out of range: a 401(k) % over 100, or an unlikely birth year once all
+ * four digits are in (fewer digits are still being typed).
+ */
+function outOfRange(field: string, raw: string, n: number) {
+  if (field === "k401Percent") return n > 100;
+  if (field === "birthYear") return raw.trim().length >= 4 && ageOf(n) === undefined;
+  return false;
+}
+
 function setupInputs() {
   $("#taxYearBadge").textContent = `Tax year ${Tax.TAX_YEAR}`;
   $("#filingStatus").innerHTML = options(FILING_STATUSES.map((f) => [f.id, f.name]));
@@ -410,7 +441,7 @@ function setupInputs() {
         fields(state.income)[f] = el.value || "";
       } else {
         const n = parseNum(el.value);
-        const bad = el.value.trim() !== "" && (!Number.isFinite(n) || n < 0 || (f === "k401Percent" && n > 100));
+        const bad = el.value.trim() !== "" && (!Number.isFinite(n) || n < 0 || outOfRange(f, el.value, n));
         el.classList.toggle("invalid", bad);
         if (bad) return;
         fields(state.income)[f] = el.value.trim() === "" ? 0 : n;
@@ -436,7 +467,7 @@ function setupInputs() {
       const f = el.dataset.sfield as string;
       if (el.tagName === "SELECT") { fields(state.spouse)[f] = el.value; commit(); return; }
       const n = parseNum(el.value);
-      const bad = el.value.trim() !== "" && (!Number.isFinite(n) || n < 0 || (f === "k401Percent" && n > 100));
+      const bad = el.value.trim() !== "" && (!Number.isFinite(n) || n < 0 || outOfRange(f, el.value, n));
       el.classList.toggle("invalid", bad);
       if (bad) return;
       fields(state.spouse)[f] = el.value.trim() === "" ? 0 : n;
@@ -465,6 +496,24 @@ function setupInputs() {
   $("#withholdShortfall").addEventListener("change", (e) => {
     state.income.withholdShortfall = (e.target as HTMLInputElement).checked;
     commit();
+  });
+  $("#k401Max").addEventListener("change", (e) => {
+    state.income.k401Max = (e.target as HTMLInputElement).checked;
+    commit();
+  });
+  $("#spouseK401Max").addEventListener("change", (e) => {
+    state.spouse.k401Max = (e.target as HTMLInputElement).checked;
+    commit();
+  });
+
+  try { if (localStorage.getItem(PAY_VIEW_KEY) === "mine") payView = "mine"; } catch (_) { /* ignore */ }
+  $("#payViewSeg").addEventListener("click", (e) => {
+    if (!(e.target instanceof Element)) return;
+    const btn: HTMLElement | null = e.target.closest("button[data-value]");
+    if (!btn) return;
+    payView = btn.dataset.value === "mine" ? "mine" : "combined";
+    try { localStorage.setItem(PAY_VIEW_KEY, payView); } catch (_) { /* ignore */ }
+    render(); // a display choice: nothing to save or sync
   });
 
   $("#periodChips").addEventListener("click", (e) => {
@@ -596,6 +645,40 @@ function render() {
   emit("render", ctx);
 }
 
+type PayView = "combined" | "mine";
+/** The results card with a spouse or other income: the household's, or just your paycheck. */
+let payView: PayView = "combined";
+
+/** The amounts a results card shows: the household's, or one paycheck's. */
+interface PayFigures {
+  gross: number; benefits: number; k401: number; net: number;
+  /** what's owed for the year */
+  taxes: number;
+  /** what paychecks take, extra withholding included */
+  paycheckTaxes: number;
+  federal: number; extraWithholding: number; socialSecurity: number; medicare: number; seTax: number;
+  stateTax: number; localTax: number;
+  payrollItems: { name: string; amount: number }[];
+}
+
+function householdFigures(r: TaxResult): PayFigures {
+  return {
+    gross: r.gross, benefits: r.benefits, k401: r.k401, net: r.net, taxes: r.taxes, paycheckTaxes: r.withholding.taxes,
+    federal: r.withholding.federal, extraWithholding: r.extraWithholding, socialSecurity: r.socialSecurity,
+    medicare: r.withholding.medicare, seTax: r.seTax, stateTax: r.stateTax, localTax: r.localTax, payrollItems: r.payrollItems,
+  };
+}
+
+/** One person's paycheck: federal tax and Medicare as their employer withholds them. */
+function paycheckFigures(p: Person): PayFigures {
+  return {
+    gross: p.gross, benefits: p.benefits, k401: p.k401, net: p.net, taxes: p.taxes,
+    paycheckTaxes: p.gross - p.benefits - p.k401 - p.net,
+    federal: p.withheld.federal, extraWithholding: p.extraWithholding, socialSecurity: p.socialSecurity,
+    medicare: p.withheld.medicare, seTax: 0, stateTax: p.state, localTax: p.local, payrollItems: p.payrollItems,
+  };
+}
+
 function renderPaycheck(ctx: AppContext) {
   const r = ctx.result;
   const you = r.people[0];
@@ -611,14 +694,27 @@ function renderPaycheck(ctx: AppContext) {
   $("#bonusRoot").hidden = empty || you.gross <= 0;
   renderStateHint(r);
   renderWithholding(r);
-  if (empty) { $("#k401Hint").textContent = ""; $("#spouseHint").textContent = ""; return; }
+  renderK401(you, "you");
+  renderK401(partner, "spouse");
+  if (empty) return;
 
-  // Just your paycheck: show it per paycheck. A spouse or other income: show the household per month.
+  // Just your paycheck: show it per paycheck. A spouse or other income: show the household per month,
+  // unless you've switched to just your paycheck.
   const household = !!partner || r.extras.gross > 0;
-  const colPer = household ? 12 : per;
+  const canSplit = household && you.gross > 0;
+  const mine = canSplit && payView === "mine";
+  const combined = household && !mine;
+  const seg = $("#payViewSeg");
+  seg.hidden = !canSplit;
+  for (const b of $$("button", seg)) {
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(b.dataset.value === (mine ? "mine" : "combined")));
+  }
+  const v = mine ? paycheckFigures(you) : householdFigures(r);
+  const colPer = combined ? 12 : per;
   const p = (annual: number) => annual / colPer;
 
-  if (household) {
+  if (combined) {
     $("#takeHomeLabel").textContent = "Household take-home per month";
     $("#takeHome").textContent = money(r.net / 12);
     const parts = [];
@@ -627,8 +723,8 @@ function renderPaycheck(ctx: AppContext) {
     if (r.extras.gross > 0) parts.push(`Other income ${money(r.extras.net / 12)}/mo after tax`);
     $("#paychecksNote").textContent = parts.join(" · ");
   } else {
-    $("#takeHomeLabel").textContent = `${PERIODS[pay].label} take-home`;
-    $("#takeHome").textContent = money(r.net / per);
+    $("#takeHomeLabel").textContent = mine ? `Your ${PERIODS[pay].label.toLowerCase()} take-home` : `${PERIODS[pay].label} take-home`;
+    $("#takeHome").textContent = money(v.net / per);
     $("#paychecksNote").textContent = `${per} paychecks a year · ${money(you.gross / per)} gross each`;
   }
 
@@ -640,12 +736,12 @@ function renderPaycheck(ctx: AppContext) {
   }
 
   const stats = [
-    [household ? "Household take-home / yr" : "Annual take-home", money(r.net)],
-    ["Annual taxes", money(r.taxes)],
-    ["Effective tax rate", pct(r.effectiveRate)],
+    [combined ? "Household take-home / yr" : mine ? "Your take-home / yr" : "Annual take-home", money(v.net)],
+    [mine ? "Your taxes / yr" : "Annual taxes", money(v.taxes)],
+    ["Effective tax rate", pct(v.gross > 0 ? v.taxes / v.gross : 0)],
     ["Federal bracket", pct(r.federalMarginal, 0)],
   ];
-  $("#stats").innerHTML = stats.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  $("#stats").innerHTML = stats.map(([k, val]) => `<div class="stat"><div class="k">${k}</div><div class="v">${val}</div></div>`).join("");
 
   const stateNote = $("#stateNote");
   stateNote.hidden = !!state.income.state;
@@ -658,73 +754,123 @@ function renderPaycheck(ctx: AppContext) {
     setAside.innerHTML = `No tax is withheld from your self-employment or other taxable income. Set aside about <b>${money(r.extras.setAside / 12)}</b> a month (${money(r.extras.setAside)} a year), or pay quarterly estimated taxes.`;
   }
 
-  const flow = ([
-    ["Taxes", r.withholding.taxes, "var(--c-tax)"],
-    ["401(k)", r.k401, "var(--c-ret)"],
-    ["Benefits", r.benefits, "var(--c-ben)"],
+  // The budget is the household's, so just your paycheck ends at take-home.
+  type Slice = [label: string, annual: number, color: string];
+  const rest: Slice[] = mine ? [["Take-home", Math.max(0, v.net), "var(--c-left)"]] : [
     ["Budget", Math.min(ctx.budgetAnnual, Math.max(0, r.net)), "var(--c-bud)"],
     ["Left over", Math.max(0, ctx.leftAnnual), "var(--c-left)"],
-  ] satisfies [string, number, string][]).filter(([, v]) => v > 0.005);
-  const total = r.gross || 1;
-  $("#flowHead").textContent = household ? "Where the household's money goes" : "Where each paycheck goes";
-  $("#flowBar").innerHTML = flow.map(([k, v, c]) => `<span style="width:${(v / total) * 100}%;background:${c}" title="${k}: ${money(p(v))}"></span>`).join("");
-  $("#flowBar").setAttribute("aria-label", flow.map(([k, v]) => `${k} ${pct(v / total, 0)}`).join(", "));
-  $("#flowLegend").innerHTML = flow.map(([k, v, c]) => `<li><span class="dot" style="background:${c}"></span>${k} <b>${money(p(v))}</b> <span>${pct(v / total, 0)}</span></li>`).join("");
+  ];
+  const flow = ([
+    ["Taxes", v.paycheckTaxes, "var(--c-tax)"],
+    ["401(k)", v.k401, "var(--c-ret)"],
+    ["Benefits", v.benefits, "var(--c-ben)"],
+    ...rest,
+  ] satisfies Slice[]).filter(([, amt]) => amt > 0.005);
+  const total = v.gross || 1;
+  $("#flowHead").textContent = combined ? "Where the household's money goes" : "Where each paycheck goes";
+  $("#flowBar").innerHTML = flow.map(([k, amt, c]) => `<span style="width:${(amt / total) * 100}%;background:${c}" title="${k}: ${money(p(amt))}"></span>`).join("");
+  $("#flowBar").setAttribute("aria-label", flow.map(([k, amt]) => `${k} ${pct(amt / total, 0)}`).join(", "));
+  $("#flowLegend").innerHTML = flow.map(([k, amt, c]) => `<li><span class="dot" style="background:${c}"></span>${k} <b>${money(p(amt))}</b> <span>${pct(amt / total, 0)}</span></li>`).join("");
 
-  $("#bdTitleHead").textContent = household ? "Household" : "Per paycheck";
-  $("#bdPeriodHead").textContent = household ? "Monthly" : PERIODS[pay].label;
-  const capped = r.people.some((x) => x.k401Capped) ? ' <span class="rate">capped at limit</span>' : "";
-  const k401Label = !household || !partner ? (you.isRoth ? "Roth 401(k)" : "401(k)") : "401(k)";
+  $("#bdTitleHead").textContent = combined ? "Household" : "Per paycheck";
+  $("#bdPeriodHead").textContent = combined ? "Monthly" : PERIODS[pay].label;
+  const shown = mine ? [you] : r.people;
+  const k401Label = !(combined && partner) && you.isRoth ? "Roth 401(k)" : "401(k)";
+  const k401Notes = [
+    shown.some((x) => x.k401Capped) && "capped at limit",
+    shown.every((x) => (x.role === "you" ? state.income : state.spouse).k401Max) && "max",
+    shown.some((x) => !x.isRoth && x.k401Roth > 0.005) && "incl. Roth catch-up",
+  ].filter((x): x is string => !!x);
   const sd = StateTax.get(r.state.code);
   const stateNoteText = !sd ? "" : sd.kind === "none" ? "no income tax" : sd.kind === "flat" ? `${+(Number(sd.rate) * 100).toFixed(3)}%` : "graduated";
+  // On a joint return your paycheck carries a share of the state and local tax, split by wages.
+  const share = mine && partner ? "your share" : null;
   const rows: [label: string, amount: number, minus: boolean, note?: string | null][] = [];
-  if (household) {
+  if (combined) {
     if (you.gross > 0) rows.push(["Your pay", you.gross, false]);
     if (partner) rows.push(["Spouse's pay", partner.gross, false]);
     if (r.extras.gross > 0) rows.push(["Other income", r.extras.gross, false]);
   } else {
-    rows.push(["Gross pay", r.gross, false]);
+    rows.push(["Gross pay", v.gross, false]);
   }
-  if (r.benefits > 0) rows.push(["Pre-tax benefits", -r.benefits, true]);
-  if (r.k401 > 0) rows.push([`${k401Label}${capped}`, -r.k401, true]);
+  if (v.benefits > 0) rows.push(["Pre-tax benefits", -v.benefits, true]);
+  if (v.k401 > 0) rows.push([k401Label, -v.k401, true, k401Notes.join(" · ") || null]);
   // Federal tax and Medicare as paychecks take them; the withholding note says what's left to settle.
-  const w = r.withholding;
-  const fedNotes = [r.childCredit > 0 && `after ${money(r.childCredit)} in credits`, Math.abs(w.federal - r.federal) >= 1 && "as withheld"]
+  const owedFederal = mine ? you.federal : r.federal;
+  const fedNotes = [!mine && r.childCredit > 0 && `after ${money(r.childCredit)} in credits`, Math.abs(v.federal - owedFederal) >= 1 && "as withheld"]
     .filter((x): x is string => !!x);
-  rows.push(["Federal income tax", -w.federal, true, fedNotes.join(" · ") || null]);
-  if (r.extraWithholding > 0.005) rows.push(["Extra federal withholding", -r.extraWithholding, true, "W-4 4(c)"]);
-  rows.push(["Social Security", -r.socialSecurity, true, "6.2%"]);
-  rows.push(["Medicare", -w.medicare, true, "1.45%"]);
-  if (r.seTax > 0) rows.push(["Self-employment tax", -r.seTax, true, "15.3%"]);
-  if (r.state.code) rows.push([`${esc(r.state.name)} income tax`, -r.stateTax, true, stateNoteText]);
-  if (r.local.id !== "none") rows.push([`${esc(r.local.name || "Local")} tax`, -r.localTax, true, r.local.rate != null && r.local.rate > 0 ? `${+(r.local.rate * 100).toFixed(3)}%` : null]);
-  for (const item of r.payrollItems) if (item.amount > 0.005) rows.push([esc(item.name), -item.amount, true]);
-  $("#breakdown tbody").innerHTML = rows.map(([label, v, minus, note]) =>
-    `<tr class="${minus ? "minus" : ""}"><td>${label}${note ? `<span class="rate">${note}</span>` : ""}</td><td class="num">${money(p(v))}</td><td class="num">${money(v)}</td></tr>`
+  rows.push(["Federal income tax", -v.federal, true, fedNotes.join(" · ") || null]);
+  if (v.extraWithholding > 0.005) rows.push(["Extra federal withholding", -v.extraWithholding, true, "W-4 4(c)"]);
+  rows.push(["Social Security", -v.socialSecurity, true, "6.2%"]);
+  rows.push(["Medicare", -v.medicare, true, "1.45%"]);
+  if (v.seTax > 0) rows.push(["Self-employment tax", -v.seTax, true, "15.3%"]);
+  if (r.state.code) rows.push([`${esc(r.state.name)} income tax`, -v.stateTax, true, [stateNoteText, share].filter(Boolean).join(" · ")]);
+  const localRate = r.local.rate != null && r.local.rate > 0 ? `${+(r.local.rate * 100).toFixed(3)}%` : null;
+  if (r.local.id !== "none") rows.push([`${esc(r.local.name || "Local")} tax`, -v.localTax, true, [localRate, share].filter(Boolean).join(" · ") || null]);
+  for (const item of v.payrollItems) if (item.amount > 0.005) rows.push([esc(item.name), -item.amount, true]);
+  $("#breakdown tbody").innerHTML = rows.map(([label, amt, minus, note]) =>
+    `<tr class="${minus ? "minus" : ""}"><td>${label}${note ? `<span class="rate">${note}</span>` : ""}</td><td class="num">${money(p(amt))}</td><td class="num">${money(amt)}</td></tr>`
   ).join("");
-  $("#breakdown tfoot").innerHTML = `<tr><td>Take-home pay</td><td class="num">${money(p(r.net))}</td><td class="num">${money(r.net)}</td></tr>`;
+  $("#breakdown tfoot").innerHTML = `<tr><td>Take-home pay</td><td class="num">${money(p(v.net))}</td><td class="num">${money(v.net)}</td></tr>`;
 
   const chipPeriods: Period[] = ["weekly", "biweekly", "semimonthly", "monthly", "annual"];
   $("#periodChips").innerHTML = chipPeriods.map((cp) =>
-    `<button type="button" class="chip" data-period="${cp}" aria-pressed="${cp === ctx.viewPeriod}"><div class="k">${PERIODS[cp].label}</div><div class="v">${money(r.net / PERIODS[cp].perYear)}</div></button>`
+    `<button type="button" class="chip" data-period="${cp}" aria-pressed="${cp === ctx.viewPeriod}"><div class="k">${PERIODS[cp].label}</div><div class="v">${money(v.net / PERIODS[cp].perYear)}</div></button>`
   ).join("");
 
   const notes = (r.state.notes || []).map(esc).join(" ");
   const rough = r.state.unverified ? ` ${esc(r.state.name)}'s figures haven't been checked against official 2026 sources yet.` : "";
-  $("#resultsFine").innerHTML = `Estimate only, not tax advice. Uses ${Tax.TAX_YEAR} federal${r.state.name ? ` and ${esc(r.state.name)}` : ""} rates with the standard deduction.${notes ? ` ${notes}` : ""}${rough}`;
-
-  const hint = $("#k401Hint");
-  if (you.k401 > 0) {
-    hint.textContent = `${money(you.k401)}/yr · ${money(you.k401 / per)} per paycheck` +
-      (you.k401Capped ? ` · capped at the ${usd0.format(you.k401Limit)} limit` : "");
-    hint.classList.toggle("warn", you.k401Capped);
-  } else {
-    hint.textContent = "";
-  }
-  const spHint = $("#spouseHint");
-  spHint.textContent = partner && partner.k401 > 0
-    ? `401(k): ${money(partner.k401)}/yr · ${money(partner.k401 / spPer)} per paycheck${partner.k401Capped ? " · capped at the limit" : ""}`
+  const yours = mine
+    ? ` This is your paycheck alone${partner && (r.state.code || r.local.id !== "none") ? ", with a share of the household's state and local tax split by wages" : ""}. The Budget tab uses the combined take-home.`
     : "";
+  $("#resultsFine").innerHTML = `Estimate only, not tax advice. Uses ${Tax.TAX_YEAR} federal${r.state.name ? ` and ${esc(r.state.name)}` : ""} rates with the standard deduction.${yours}${notes ? ` ${notes}` : ""}${rough}`;
+}
+
+/**
+ * The 401(k) fields for you or your spouse. With "Max it out" checked, the % box is locked and shows the
+ * share of pay the max comes to (the % entered comes back when it's unchecked), and the hint says what
+ * the max is: the pre-tax limit for your age (see Tax.calculate).
+ * @param p  that person's paycheck, or null when they have no pay entered
+ */
+function renderK401(p: Person | null, who: "you" | "spouse") {
+  const src = who === "you" ? state.income : state.spouse;
+  const pctEl = $(who === "you" ? "#k401Percent" : "#spouseK401") as HTMLInputElement;
+  const hint = $(who === "you" ? "#k401Hint" : "#spouseHint");
+  const on = src.k401Max;
+  ($(who === "you" ? "#k401Max" : "#spouseK401Max") as HTMLInputElement).checked = on;
+  if (on) {
+    pctEl.value = p && p.gross > 0 ? String(+((p.k401 / p.gross) * 100).toFixed(2)) : "";
+    pctEl.classList.remove("invalid");
+  } else if (pctEl.disabled) {
+    pctEl.value = src.k401Percent ? String(src.k401Percent) : "";
+  }
+  pctEl.disabled = on;
+
+  hint.classList.remove("warn");
+  if (!p || p.gross <= 0) { hint.textContent = ""; return; }
+  const per = PERIODS[src.payPeriod].perYear;
+  const age = ageOf(src.birthYear);
+  const parts: string[] = [];
+  if (p.k401 > 0) {
+    let text = `${who === "spouse" ? "401(k): " : ""}${money(p.k401)}/yr · ${money(p.k401 / per)} per paycheck`;
+    const catchUp = p.k401Limit - Tax.FEDERAL.k401Limit;
+    const forAge = age !== undefined && age >= 60 && age <= 63 ? "ages 60 to 63" : "50 and older";
+    const preTaxOnly = p.k401MaxLimit < p.k401Limit;
+    if (on && p.k401 < p.k401MaxLimit - 0.005) text += " · all of the pay left after benefits";
+    else if (on && preTaxOnly) text += " · the most you can put in pre-tax";
+    else if (on) text += ` · the ${Tax.TAX_YEAR} limit${catchUp > 0 ? `, with the ${usd0.format(catchUp)} catch-up for ${forAge}` : ""}`;
+    else if (p.k401Capped) text += ` · capped at the ${usd0.format(p.k401Limit)} limit`;
+    parts.push(`${text}.`);
+    if (on && preTaxOnly && p.k401 >= p.k401MaxLimit - 0.005) {
+      parts.push(`With pay over ${usd0.format(Tax.FEDERAL.k401RothCatchUpWages)}, the ${usd0.format(catchUp)} catch-up for ${forAge} can only go in as Roth, so it's left out.`);
+    }
+  }
+  if (!p.isRoth && p.k401Roth > 0.005) {
+    parts.push(`${usd0.format(p.k401Roth)} of it goes in as Roth: with pay over ${usd0.format(Tax.FEDERAL.k401RothCatchUpWages)}, catch-up contributions have to be Roth.`);
+  }
+  if (age === undefined && (on || p.k401Capped)) parts.push("50 or older? Add the year you were born to raise the limit with catch-up contributions.");
+  hint.textContent = parts.join(" ");
+  hint.classList.toggle("warn", p.k401Capped);
 }
 
 /**
